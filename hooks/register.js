@@ -39,6 +39,11 @@ const LEGACY_GUARDS_FILE = '{config}/projects/{project}/baton-guards.json'
 // 改名前的外掛暫存（見 importLegacyStore）
 const LEGACY_STORE_DIR = '{config}/plugins/store'
 const LEGACY_STORE_MARK = 'imported:baton'
+// herdr App 重開機後接回 Claude：每個終端機一個紀錄檔，app/resume.mjs 讀。不放 {config}，
+// 因為 CLAUDE_CONFIG_DIR 不同的 session（多帳號）也要記在同一處
+const RESUME_DIR = '~/.tendr/resume'
+// 自己離開（/exit、ctrl+c、登出）的不接回；SIGHUP／SIGTERM（關機、重開機）是 other，要接回
+const DELIBERATE_EXITS = ['prompt_input_exit', 'logout']
 // 整理筆記的對話紀錄最多留幾則（整理失敗一直重試時不會無限長大）
 const TALK_MAX = 400
 
@@ -810,6 +815,10 @@ let notesModel = 'sonnet'
 let talk = { items: [], humans: 0 } // 上次整理之後的對話：使用者親手打的訊息與 Claude 的回答
 let distilling = false
 let lastDistill = null // { at, why, added: [], confirmed: [], rejected: [], error }
+
+// 接回用：這個 session 已經記下的 id（換 id 才重寫），以及自己終端機的身分（建立時間、shell 的 pid）
+let resumeSaved = ''
+let terminalInfo = null
 
 // 守門
 let guardsFile = ''
@@ -1637,6 +1646,47 @@ async function importLegacyStore($) {
   }
 }
 
+// ---------- herdr App 重開機後接回 ----------
+
+// 位址可能是 machine/t7：檔名只留安全字元
+async function resumeFile($) {
+  return (await expandPath($, RESUME_DIR)) + '/' + herdrSelf.replace(/[^\w.-]/g, '_') + '.json'
+}
+
+// 記下「哪個終端機跑著哪個對話」。App 恢復終端機時給的是新的 shell（pid 會變），
+// app/resume.mjs 靠建立時間認終端機、靠 pid 變了知道要接回
+async function rememberTerminal($) {
+  if (herdrKind !== 'hc' || !herdrSelf) return
+  try {
+    const id = await $.session.id()
+    if (!id || id === resumeSaved) return
+    if (!terminalInfo) {
+      const r = await $.process.run([herdrBin, 'get', herdrSelf, '--json'], { timeoutMs: 5000 })
+      if (r.exitCode !== 0) return
+      const t = JSON.parse(r.stdout)
+      terminalInfo = { created: t.created_ms ?? null, pid: t.pid ?? null }
+    }
+    const record = {
+      terminal: herdrSelf,
+      ...terminalInfo,
+      sessionId: id,
+      root: (await $.session.root()).replace(/\\/g, '/'),
+      configDir: (await $.env.get('CLAUDE_CONFIG_DIR')) || '',
+      updated: new Date(await $.clock.now()).toISOString(),
+    }
+    await $.fs.write(await resumeFile($), JSON.stringify(record, null, 2) + '\n')
+    resumeSaved = id
+  } catch {
+    // 記不下來就下一輪再試，不影響對話
+  }
+}
+
+// 自己離開的：留一個「已結束」的紀錄（$.fs 沒有刪檔），app/resume.mjs 看到就清掉
+async function forgetTerminal($, reason) {
+  await $.fs.write(await resumeFile($), JSON.stringify({ terminal: herdrSelf, ended: reason, updated: new Date(await $.clock.now()).toISOString() }) + '\n')
+  resumeSaved = ''
+}
+
 // ---------- 守門 ----------
 
 async function loadGuards($) {
@@ -1955,6 +2005,19 @@ export function register(on, options) {
       // 引擎會在外掛送的訊息前加「The tendr plugin sent a message: 」，所以不能用 startsWith
       if (phase === 'handoff' && !handoffTurnId && HANDOFF_PREFIXES.some((p) => String(e.text ?? '').includes(p))) handoffTurnId = e.turnId
       $.ui.invalidate('ui.render')
+      // 有送過 prompt 才有對話紀錄可接；/clear 之後換了 id 也在這裡補記
+      await rememberTerminal($)
+    }
+    return next(e)
+  })
+
+  on('session.end', async ($, e, next) => {
+    try {
+      if (herdrKind === 'hc' && herdrSelf && DELIBERATE_EXITS.includes(e.reason)) await forgetTerminal($, e.reason)
+      // /clear、/resume 後行程還在、換了 id，而且不會再有 session.start：下一輪重記
+      if (e.reason === 'clear' || e.reason === 'resume') resumeSaved = ''
+    } catch {
+      // 結束時只有很短的時間，寫不下來就算了
     }
     return next(e)
   })

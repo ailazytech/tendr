@@ -295,6 +295,16 @@ node app/install.mjs --layout my-main   # use your layout's name
 - Data is read by `app/board-data.mjs` with the plugin's path rules; install records absolute paths to node and that script, so reinstall after moving the repo
 - A lane needs `pane` set to an hc address (`t7`) or name for the live screen; one `hc read` takes about 2–3 s
 
+#### Bringing Claude back after a reboot
+
+Closing or updating the herdr app doesn't stop terminals, but after a reboot or logout the core only gives each kept terminal a new shell in its last folder; it never runs Claude again (upstream waits for OSC 7501 to carry session ids). tendr fills the gap:
+
+- Inside an app terminal, the plugin records "terminal ↔ conversation" at the start of every turn in `~/.tendr/resume/<address>.json`: the terminal's creation time and shell pid, the session id, the project folder, `CLAUDE_CONFIG_DIR`
+- Sessions you leave yourself (`/exit`, ctrl+c, logout) are marked ended and not brought back; shutdowns and reboots (SIGHUP / SIGTERM) are kept
+- `node app/resume.mjs`: for a terminal that is still there with the same creation time but a new pid (replaced by a recovery shell), it sends `claude --resume <id>` into that shell, with the right syntax for PowerShell, cmd or bash-like shells, after going back to the project folder and restoring `CLAUDE_CONFIG_DIR`. Safe to run repeatedly (a terminal is resumed once); `--dry-run` only lists what it would do
+- To run it when the app starts, `exec("node", ["<repo>/app/resume.mjs"])` from a mod that is always shown (e.g. your status bar), and again every minute for the first few minutes (recovery can come a little later)
+- Only Claude Code is brought back; launch flags (e.g. `--model`, `--dangerously-skip-permissions`) are not restored
+
 ## Development
 
 A marketplace added from a local folder reads that folder directly: saving a file hot-reloads running sessions — no version bump or update needed. Don't also load the same folder with `--plugin-dir`, or it loads twice.

@@ -24,6 +24,7 @@ tendr（原名 baton）是 Claude Code 的 hooks 外掛（plugin 的 `hooks/hook
 | `tests/logic.test.ts` | `nudges.js`、`notes.js`、`guards.js` 的純函式測試 |
 | `app/mod/` | herdr App 的看板 mod（QuickJS + gpui-kit，風格跟 App 內建 mod 一樣用分號）。只畫畫面與呼叫 `hc`，資料由 `board-data.mjs` 給 |
 | `app/board-data.mjs` | 給 App 看板的資料：挑專案、讀 lane、交接文件、記憶。路徑規則必須與 `register.js` 的 `expandPath` 一致 |
+| `app/resume.mjs` | 重開機後接回 Claude：讀 `~/.tendr/resume/*.json`（外掛的 `rememberTerminal` 寫），pid 變了的終端機送 `claude --resume`。送進 shell 的字串要先驗證（session id、路徑） |
 | `app/install.mjs` | 把 mod 裝進 `~/.config/herdr-app/mods/tendr-board`、寫 `config.js`，可選擇加進某個 layout |
 | `README.md`／`README.en.md` | 使用者文件（中英） |
 
@@ -40,6 +41,7 @@ tendr（原名 baton）是 Claude Code 的 hooks 外掛（plugin 的 `hooks/hook
    - `turn.start`／`turn.step`／`turn.complete`：執行狀態、快取計時（`lastRequestAt`）、交接那一輪結束後觸發壓縮；`turn.step` 判斷回覆語言，`turn.complete` 記下回答、每 `distill_every` 則訊息觸發整理
    - `classic.Stop`：說完成了卻沒驗證時回 `block`（`doneCheck`）
    - `session.compact`、`classic.PostCompact`：存壓縮摘要
+   - `session.end`：herdr App 裡自己離開（`prompt_input_exit`、`logout`）時把接回紀錄標成已結束；`turn.start` 記下（`rememberTerminal`）
    - `tool.call`：守門比對（`findGuardHit`，deny 直接回 `deny`）、記錄工具呼叫、防呆觀察（`watchCall`：連續失敗、改檔與驗證）、偵測 Bash 裡的 herdr／hc 指令、改了記憶／守門檔就重讀
    - `ui.render`（`AbovePrompt`、`Pane`）：畫按鈕與看板
 5. 看板畫面在 `ui.render { component: 'Pane' }` 裡，用 `$.ui.resolve(e)` 拿到 `Box`、`Button`、`Markdown` 等元件，依 `tab` 與 `route`（任務分頁的子頁堆疊）組出列。

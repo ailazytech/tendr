@@ -24,6 +24,7 @@ tendr (formerly baton) is a Claude Code hooks plugin (the plugin's `hooks/hooks.
 | `tests/logic.test.ts` | Pure-function tests for `nudges.js`, `notes.js`, `guards.js` |
 | `app/mod/` | The herdr app board mod (QuickJS + gpui-kit; semicolons like the app's built-in mods). Rendering and `hc` calls only; data comes from `board-data.mjs` |
 | `app/board-data.mjs` | Data for the app board: picks the project, reads lanes, handoff document, memories. Path rules must match `expandPath` in `register.js` |
+| `app/resume.mjs` | Brings Claude back after a reboot: reads `~/.tendr/resume/*.json` (written by the plugin's `rememberTerminal`) and sends `claude --resume` into terminals whose pid changed. Validate anything typed into a shell (session id, paths) |
 | `app/install.mjs` | Installs the mod into `~/.config/herdr-app/mods/tendr-board`, writes `config.js`, optionally adds it to a layout |
 | `README.md` / `README.en.md` | User docs (Chinese / English) |
 
@@ -40,6 +41,7 @@ Top to bottom:
    - `turn.start` / `turn.step` / `turn.complete`: run state, cache timer (`lastRequestAt`), trigger compaction after the handoff turn; `turn.step` checks the reply language, `turn.complete` logs the answer and triggers notes every `distill_every` messages
    - `classic.Stop`: return `block` when Claude claims done without verifying (`doneCheck`)
    - `session.compact`, `classic.PostCompact`: save the compaction summary
+   - `session.end`: in the herdr app, marks the resume record ended when the user leaves (`prompt_input_exit`, `logout`); `turn.start` records it (`rememberTerminal`)
    - `tool.call`: guard matching (`findGuardHit`; deny returns `deny`), track tool calls, nudges (`watchCall`: repeated failures, edit/verify), detect herdr / hc commands inside Bash, reload memory / guards when their files are written
    - `ui.render` (`AbovePrompt`, `Pane`): draw the launcher button and the board
 5. The board is built in `ui.render { component: 'Pane' }`: `$.ui.resolve(e)` returns `Box`, `Button`, `Markdown`, etc., and rows are assembled from `tab` and `route` (the sub-page stack of the Tasks tab).

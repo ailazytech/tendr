@@ -104,6 +104,8 @@ function setup(
     herdr.argv.push(argv)
     if (argv[0] === 'hc') {
       if (argv[1] === 'read') return { value: { exitCode: 0, stdout: herdr.screen, stderr: '' } }
+      // 自己的終端機：建立時間與 shell 的 pid 是接回時認終端機用的
+      if (argv[1] === 'get') return { value: { exitCode: 0, stdout: JSON.stringify({ address: argv[2], created_ms: 1_700_000_000_000, pid: 4242, state: 'live' }), stderr: '' } }
       if (argv[1] === 'ls') {
         herdr.runs += 1
         return { value: { exitCode: 0, stdout: JSON.stringify({ hidden_finished: 0, terminals: herdr.terminals }), stderr: '' } }
@@ -239,6 +241,7 @@ function setup(
     return { turnId: e.turnId, index: e.index, answer: tools.answer, toolUses: tools.toolUses, stopReason: 'end_turn', usage: null }
   })
   on('classic.Stop', () => ({}))
+  on('session.end', ($: any, e: any) => ({ sessionId: e.sessionId }))
   return { clock, saved, calls, files, herdr, tools }
 }
 
@@ -359,6 +362,40 @@ test('herdr App 裡（只有 HC_TERMINAL_ID）：Herdr 分頁列出用 hc 指揮
   expect(herdr.argv.some((a) => a.join(' ') === 'hc ls --json')).toBe(true)
   expect(herdr.argv.some((a) => a[0] === HERDR_BIN || a[0] === 'herdr')).toBe(false)
   expect(calls.toasts).toEqual([])
+})
+
+const RESUME_FILE = MAC.home + '/.tendr/resume/t4.json'
+
+test('herdr App 裡：送出第一個 prompt 後記下終端機與對話；關機（other）留著，自己離開標成已結束', async ($, on) => {
+  const { files } = setup(on, { hc: true })
+  await start($)
+  // 還沒送過 prompt 就沒有對話紀錄可接，不記
+  expect(files.get(RESUME_FILE)).toBeUndefined()
+  await $.turn.start({ turnId: 't1', text: '開始' })
+  const record = JSON.parse(files.get(RESUME_FILE) ?? '{}')
+  expect(record.terminal).toBe('t4')
+  expect(record.sessionId).toBe('sess-1')
+  expect(record.created).toBe(1_700_000_000_000)
+  expect(record.pid).toBe(4242)
+  expect(record.root).toBe(ROOT)
+  // SIGHUP／SIGTERM（關機、重開機）要接回：紀錄不動
+  await $.session.end({ reason: 'other', sessionId: 'sess-1', resume: { id: 'sess-1' } })
+  expect(JSON.parse(files.get(RESUME_FILE) ?? '{}').sessionId).toBe('sess-1')
+  // /exit、ctrl+c：不接回
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: 'sess-1', resume: { id: 'sess-1' } })
+  const ended = JSON.parse(files.get(RESUME_FILE) ?? '{}')
+  expect(ended.ended).toBe('prompt_input_exit')
+  expect(ended.sessionId).toBeUndefined()
+  // 同一個終端機再開一輪（例如重新執行 claude）又記回來
+  await $.turn.start({ turnId: 't2', text: '再來' })
+  expect(JSON.parse(files.get(RESUME_FILE) ?? '{}').sessionId).toBe('sess-1')
+})
+
+test('不在 herdr App 裡不記接回用的紀錄', async ($, on) => {
+  const { files } = setup(on, { herdr: true })
+  await start($)
+  await $.turn.start({ turnId: 't1', text: '開始' })
+  expect([...files.keys()].some((p) => p.includes('/.tendr/'))).toBe(false)
 })
 
 test('自動交接開關會存起來', async ($, on) => {

@@ -295,6 +295,16 @@ node app/install.mjs --layout my-main   # my-main 換成你的 layout
 - 資料由 `app/board-data.mjs` 讀，路徑規則與外掛相同；安裝時記下 node 與這支腳本的絕對路徑，搬了 repo 要重裝
 - lane 的 `pane` 寫 hc 位址（`t7`）或名稱，才有即時畫面；`hc read` 一次約 2～3 秒
 
+#### 重開機後接回 Claude
+
+herdr App 關掉視窗、更新都不會中斷終端機；但重開機或登出後，core 只會在原本的資料夾給一個新的 shell，不會重新執行 Claude（官方要等 OSC 7501 能帶 session id 才支援）。tendr 補上這段：
+
+- 外掛在 App 的終端機裡，每輪開始時把「終端機 ↔ 對話」記在 `~/.tendr/resume/<位址>.json`：終端機的建立時間與 shell 的 pid、session id、專案資料夾、`CLAUDE_CONFIG_DIR`
+- 自己離開（`/exit`、ctrl+c、登出）的標成已結束，不接回；關機、重開機（SIGHUP／SIGTERM）的留著
+- `node app/resume.mjs`：終端機還在、建立時間對得上、但 pid 變了（被恢復成新的 shell）的，在那個 shell 送 `claude --resume <id>`。PowerShell、cmd、bash 系各有對應寫法，會先回到專案資料夾、帶上原本的 `CLAUDE_CONFIG_DIR`。可以重複跑，送過的不會再送；`--dry-run` 只列出會做什麼
+- 要在 App 啟動時自動跑：從一個一直顯示的 mod（例如狀態列）`exec("node", ["<repo>/app/resume.mjs"])`，前幾分鐘每分鐘再跑一次（core 恢復終端機可能晚一點）
+- 只接回 Claude Code；啟動時給的參數（例如 `--model`、`--dangerously-skip-permissions`）不會帶上
+
 ## 開發
 
 從本機資料夾加入的 marketplace，安裝版直接讀這個資料夾，存檔後執行中的 session 會自動重載，不用改版本號或跑 update。不要再同時用 `--plugin-dir` 載入同一個資料夾，否則會載入兩份。
