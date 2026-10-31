@@ -36,7 +36,7 @@ claude plugin install tendr@tendr
 
 開新的 session，輸入 `/tendr`。
 
-- `/tendr`：開關看板。**輸入過 `/tendr` 的 session 才會啟用自動交接**（當作主控 session）。
+- `/tendr`：開關看板。**輸入過 `/tendr` 的 session 才會啟用自動交接**（當作主控 session）。在 herdr App 裡也可以不打 `/tendr`，改在 App 的 tendr 看板指定主控（見「主控與自動交接（App）」）。
 - `/handoff`：立即交接，不用開看板。非全螢幕時滑鼠點不到看板按鈕，就用這個。
 - `/distill`：立即整理筆記（見「自動整理筆記」）。
 - `/guard`：查看與管理守門（見「守門」）。
@@ -77,7 +77,7 @@ claude plugin install tendr@tendr
 
 1. 主控 session 每次送出請求，快取就重新計時。
 2. 快取剩 5 分鐘、且符合以下條件時，外掛送出一則以 `[自動交接]`（英文介面是 `[auto-handoff]`）開頭的指示，要 Claude 更新交接文件（或自己的 lane 狀態檔）與記憶：
-   - 這個 session 輸入過 `/tendr`，且自動交接開著
+   - 這個 session 輸入過 `/tendr`（herdr App 裡也可以在看板指定為主控），且自動交接開著
    - `cache_ttl` 是 `1h`（5 分鐘的快取不自動交接，否則一直被打斷）
    - 上下文用量至少 20%（太小不值得壓縮）
    - 最後一次輸入在 `away_hours` 以內，或 Claude 還在跑
@@ -295,6 +295,17 @@ node app/install.mjs --layout my-main   # my-main 換成你的 layout
 - 指令（`herdr-app do tendr-board.<指令>` 或 `keys.json` 綁 `tendr-board:<指令>`）：`urgent` 跳到最需要處理的 lane、`next`／`prev` 照列表順序換、`back` 回列表
 - 資料由 `app/board-data.mjs` 讀，路徑規則與外掛相同；安裝時記下 node 與這支腳本的絕對路徑，搬了 repo 要重裝。安裝也會寫 `~/.tendr/install.json`（repo、`resume.mjs`、看板的位置），讓別的 mod 找得到 tendr
 - lane 的 `pane` 寫 hc 位址（`t7`）或名稱，才有即時畫面；`hc read` 一次約 2～3 秒
+
+#### 主控與自動交接（App）
+
+在 App 裡通常是看右側的 tendr 看板，不會在 Claude 裡打 `/tendr`，所以主控改在看板上指定。列表最上面的「交接」區塊：
+
+- **還沒指定主控**：列出這個專案正在跑的 Claude（終端機位址、分頁名稱、快取剩多久），按「設為主控」。其他 session 不會自動交接，也就不會互相覆寫主控的狀態檔
+- **已指定**：★ 主控、快取倒數條（綠 → 剩 10 分鐘黃 → 剩 5 分鐘紅，10 分鐘內到秒）、現在的狀態（剩 5 分鐘時自動交接／交接中（寫狀態檔與記憶）／壓縮中／已交接，等新指示），以及「立即交接」按鈕；「換主控」「取消主控」在下面
+- 主控記在 `~/.tendr/lead.json`（`{ 專案代號: { terminal } }`，專案代號是 session 根目錄換成 `-` 的小寫），依終端機記，App 重開機、接回對話後仍是主控。外掛 5 秒內看到
+- 自動交接的條件和流程跟上面「自動交接的流程」一樣（`1h` 快取、上下文至少 20%、`away_hours` 以內）：剩 5 分鐘時送出交接指示，Claude 更新自己的 lane 狀態檔（或交接文件）與記憶，寫完自動壓縮
+- 每個 Claude 把快取倒數與交接狀態寫在 `~/.tendr/sessions/<終端機>.json`（有變才寫），看板 10 秒讀一次、交接中每 3 秒；「立即交接」寫 `~/.tendr/requests/<終端機>.json`，外掛 2 秒內接手，處理完標上 `done`，放超過 2 分鐘的不算
+- 需要外掛 0.12 以上；更新後要重開 Claude Code，看板上才會出現它
 
 #### 重開機後接回 Claude
 

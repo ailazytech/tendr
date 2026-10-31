@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 // herdr App 的 tendr 看板（app/mod/main.js）要的資料：用法 node board-data.mjs <專案根目錄> [其他候選...]
 // 從候選資料夾挑第一個有 tendr 專案設定的（App 只知道終端機的 cwd，不知道哪個是 Claude Code 的專案根目錄），
-// 讀 lane 狀態檔、交接文件、記憶，印出 JSON。路徑規則與 hooks/register.js 的 expandPath 相同
+// 讀 lane 狀態檔、交接文件、記憶、主控與各 Claude 的交接狀態，印出 JSON。路徑規則與 hooks/register.js 的 expandPath 相同
+//
+// 看板的按鈕也走這裡（App 的 mod 不能寫檔）：
+//   node board-data.mjs --lead <終端機|-> <專案代號>   指定（- 是取消）這個專案的主控
+//   node board-data.mjs --handoff <終端機>             請那個終端機的 Claude 立即交接
 import fs from 'node:fs'
 import os from 'node:os'
 
@@ -14,6 +18,17 @@ const slash = (p) => String(p).replace(/\\/g, '/')
 const home = slash(process.env.USERPROFILE || process.env.HOME || os.homedir())
 const config = slash(process.env.CLAUDE_CONFIG_DIR || home + '/.claude')
 const slug = (root) => root.replace(/[^A-Za-z0-9]/g, '-')
+// 外掛與看板之間的檔案（見 hooks/register.js 的 LEAD_FILE）
+const TENDR_HOME = home + '/.tendr'
+const LEAD_FILE = TENDR_HOME + '/lead.json'
+const SESSIONS_DIR = TENDR_HOME + '/sessions'
+const REQUESTS_DIR = TENDR_HOME + '/requests'
+// 專案代號：和外掛一樣，去掉結尾的分隔符號、換成 -、不分大小寫
+const projectKey = (root) => slug(String(root).replace(/[\\/]+$/, '')).toLowerCase()
+// 終端機位址（可能是 machine/t7）當檔名：只留安全字元
+const terminalName = (t) => String(t).replace(/[^\w.-]/g, '_')
+// 太久沒更新的交接狀態（關掉的終端機留下的）不列
+const SESSION_MAX_AGE = 7 * 24 * 3600 * 1000
 
 function readJson(file) {
   try {
@@ -21,6 +36,14 @@ function readJson(file) {
   } catch {
     return null
   }
+}
+
+// 先寫暫存檔再改名：外掛每 5 秒讀一次，不會讀到寫一半的
+function writeJson(file, value) {
+  fs.mkdirSync(file.slice(0, file.lastIndexOf('/')), { recursive: true })
+  const tmp = file + '.' + process.pid + '.tmp'
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2) + '\n')
+  fs.renameSync(tmp, file)
 }
 
 function expand(raw, rootRaw) {
@@ -94,7 +117,49 @@ function loadMemories(dir) {
   return out
 }
 
-const candidates = process.argv.slice(2).filter(Boolean)
+// 這個專案的 Claude（外掛寫的交接狀態）：已結束的、太久沒更新的不列；主控排第一個
+function loadSessions(key, leadTerminal) {
+  if (!fs.existsSync(SESSIONS_DIR)) return []
+  const now = Date.now()
+  const out = []
+  for (const name of fs.readdirSync(SESSIONS_DIR).filter((n) => n.endsWith('.json'))) {
+    const s = readJson(SESSIONS_DIR + '/' + name)
+    if (!s || s.ended || s.project !== key || typeof s.terminal !== 'string') continue
+    if (!(now - Date.parse(s.updated) < SESSION_MAX_AGE)) continue
+    out.push(s)
+  }
+  const rank = (s) => (s.terminal === leadTerminal ? 0 : 1)
+  return out.sort((a, b) => rank(a) - rank(b) || Date.parse(b.updated) - Date.parse(a.updated))
+}
+
+const args = process.argv.slice(2)
+
+if (args[0] === '--lead') {
+  const [, terminal, key] = args
+  if (!terminal || !key) {
+    console.error('usage: board-data.mjs --lead <terminal|-> <project key>')
+    process.exit(2)
+  }
+  const leads = readJson(LEAD_FILE) ?? {}
+  if (terminal === '-') delete leads[key]
+  else leads[key] = { terminal, at: new Date().toISOString() }
+  writeJson(LEAD_FILE, leads)
+  console.log(JSON.stringify({ ok: true, lead: leads[key] ?? null }))
+  process.exit(0)
+}
+
+if (args[0] === '--handoff') {
+  const terminal = args[1]
+  if (!terminal) {
+    console.error('usage: board-data.mjs --handoff <terminal>')
+    process.exit(2)
+  }
+  writeJson(REQUESTS_DIR + '/' + terminalName(terminal) + '.json', { action: 'handoff', at: Date.now() })
+  console.log(JSON.stringify({ ok: true }))
+  process.exit(0)
+}
+
+const candidates = args.filter(Boolean)
 const root = candidates.find((c) => projectSettings(c)) ?? candidates[0] ?? ''
 const found = root ? projectSettings(root) : null
 const settings = found?.settings ?? {}
@@ -110,11 +175,14 @@ try {
 } catch {
   handoff = null
 }
+const key = root ? projectKey(root) : ''
+const lead = key ? ((readJson(LEAD_FILE) ?? {})[key] ?? null) : null
 
 console.log(
   JSON.stringify({
     root: slash(root),
     name: slash(root).split('/').filter(Boolean).pop() ?? '',
+    projectKey: key,
     settingsFile: found?.file ?? '',
     selfLane: pick('tasks_self', 'architect'),
     tasksDir,
@@ -122,6 +190,10 @@ console.log(
     lanesError: error,
     handoff,
     handoffPath: handoffFile,
+    memoryDir,
     memories: root ? loadMemories(memoryDir) : [],
+    lead,
+    sessions: key ? loadSessions(key, lead?.terminal) : [],
+    now: Date.now(),
   }),
 )

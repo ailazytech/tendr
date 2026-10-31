@@ -1,4 +1,4 @@
-// tendr 看板（herdr App 版）：lane 一覽與子頁（步驟、等你決定、即時畫面、按鍵、回覆）、交接文件、記憶
+// tendr 看板（herdr App 版）：主控與快取倒數（立即交接、指定主控）、lane 一覽與子頁（步驟、等你決定、即時畫面、按鍵、回覆）、交接文件、記憶
 // 資料由 tendr repo 的 app/board-data.mjs 讀（路徑規則與外掛一致），這裡只負責畫面與 hc 操作。
 // 由 app/install.mjs 裝到 ~/.config/herdr-app/mods/tendr-board，config.js 也是它寫的
 import { View, div } from "gpui-kit";
@@ -26,10 +26,52 @@ function ago(ms) {
   return `${Math.floor(s / 86400)} 天前`;
 }
 
+// 快取倒數：10 分鐘內到秒，其他到分
+function left(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h) return `${h}h${String(m).padStart(2, "0")}m`;
+  if (m >= 10) return `${m}m`;
+  return `${m}:${String(s % 60).padStart(2, "0")}`;
+}
+
+// 外掛寫的交接狀態（~/.tendr/sessions）→ 倒數文字、顏色與進度條比例
+function cacheOf(s, t, now) {
+  if (!s.lastRequestAt) return { text: "快取尚未建立", tone: t.dim, frac: 0 };
+  const remaining = s.lastRequestAt + s.ttlMs - now;
+  if (remaining <= 0) return { text: "快取已過期 " + left(-remaining), tone: t.ansi1, frac: 0 };
+  const lead = s.leadMs ?? 300_000;
+  const tone = remaining <= lead ? t.ansi1 : remaining <= 2 * lead ? t.ansi3 : t.ansi2;
+  return { text: "快取剩 " + left(remaining), tone, frac: Math.min(1, remaining / s.ttlMs) };
+}
+
+// 主控現在在做什麼、會不會自動交接（和外掛看板底部的說法一致）
+function phaseOf(s) {
+  if (s.phase === "handoff") return "交接中…（寫狀態檔與記憶）";
+  if (s.phase === "compacting") return "壓縮中…";
+  if (!s.auto) return "自動交接已關（外掛看板可打開）";
+  if (s.cacheTtl !== "1h") return `快取 ${s.cacheTtl}，不自動交接`;
+  if (!s.armed) return "已交接，等新指示";
+  return `剩 ${Math.round((s.leadMs ?? 300_000) / 60000)} 分鐘時自動交接`;
+}
+
+// 終端機位址（可能是 machine/t7）對到 App 裡的 pane
+function paneOfTerminal(terminal) {
+  if (!terminal) return null;
+  return panes().find((p) => p.terminal === terminal || p.terminal?.endsWith("/" + terminal)) ?? null;
+}
+
+// 終端機在哪個分頁：給人看的名字
+function terminalLabel(terminal) {
+  const p = paneOfTerminal(terminal);
+  const tab = p ? spaces().flatMap((sp) => sp.tabs ?? []).find((x) => x.id === p.tab) : null;
+  return terminal + (tab?.name ? " · " + tab.name : "");
+}
+
 // lane 對應的終端機（pane 欄位是 hc 位址或名稱）在 App 裡的即時狀態
 function paneOf(l) {
-  if (!l.pane) return null;
-  return panes().find((p) => p.terminal === l.pane || p.terminal?.endsWith("/" + l.pane)) ?? null;
+  return l.pane ? paneOfTerminal(l.pane) : null;
 }
 const dialogOf = (l) => paneOf(l)?.status?.state === "blocked";
 const needsAttention = (l) => l.state === "blocked" || l.state === "failed" || l.state === "review" || dialogOf(l);
@@ -75,6 +117,7 @@ export default class TendrBoard extends View {
     this.where = whereNow();
     this.quietOpen = false;
     this.memOpen = false;
+    this.leadOpen = false; // 「換主控」的清單
     this.screen = null; // { lane, lines, at, error }
     this.reading = false;
     this.watching = "";
@@ -83,11 +126,19 @@ export default class TendrBoard extends View {
     this.load(cx);
     // lane 在別的 session 寫狀態檔：資料夾有變就重讀，另外 10 秒保底（timer 在面板收起時也會跑，別太勤）
     cx.timer.every(10_000, (cx) => this.load(cx));
-    cx.timer.every(3_000, (cx) => { if (this.route) this.readScreen(cx); });
+    cx.timer.every(3_000, (cx) => {
+      if (this.route) this.readScreen(cx);
+      // 主控在交接或壓縮：跟著看進度
+      if (this.leadSession()?.phase && this.leadSession().phase !== "idle") this.load(cx);
+    });
     // 換了 space 或分頁就馬上換專案：focused() 變動只會重畫，不會自己重讀資料
     cx.timer.every(1_000, (cx) => {
       const where = whereNow();
-      if (where === this.where) return;
+      if (where === this.where) {
+        // 快取倒數每秒走（只有列表上看得到）
+        if (!this.route && this.leadSession()?.lastRequestAt) cx.notify();
+        return;
+      }
       this.where = where;
       this.load(cx);
     });
@@ -153,6 +204,93 @@ export default class TendrBoard extends View {
 
   lane() {
     return this.data?.lanes?.find((l) => l.lane === this.route) ?? null;
+  }
+
+  // 這個專案的主控（看板指定的終端機）和它的交接狀態；主控還沒回報時 session 是 null
+  leadSession() {
+    const lead = this.data?.lead?.terminal;
+    return lead ? (this.data.sessions ?? []).find((s) => s.terminal === lead) ?? null : null;
+  }
+
+  // 按鈕都交給 board-data.mjs 寫檔（mod 不能寫檔），寫完重讀；外掛 2～5 秒內會看到
+  act(args, done, cx) {
+    cx.spawn(async (cx) => {
+      const r = await exec(NODE, [DATA_SCRIPT, ...args]);
+      if (r.code === 0) notify({ title: done, level: "info", timeout: 4000 });
+      else notify({ title: "tendr 看板寫不進去", body: (r.stderr || r.stdout || "exit " + r.code).slice(0, 160), level: "error" });
+      this.load(cx);
+      cx.timer.after(3000, (cx) => this.load(cx));
+      cx.timer.after(6000, (cx) => this.load(cx));
+    });
+  }
+
+  setLead(s, cx) {
+    this.leadOpen = false;
+    this.act(["--lead", s.terminal, s.project], `${s.terminal} 設為主控：快取快過期時會自動交接`, cx);
+  }
+
+  clearLead(cx) {
+    this.leadOpen = false;
+    this.act(["--lead", "-", this.data.projectKey], "已取消主控：不會自動交接", cx);
+  }
+
+  handoffNow(s, cx) {
+    this.act(["--handoff", s.terminal], `已請 ${s.terminal} 交接：寫完狀態檔與記憶後壓縮`, cx);
+  }
+
+  // 列表最上面：主控、快取倒數、交接狀態、立即交接；沒有主控時列出這個專案的 Claude 讓人挑
+  leadView(t, now) {
+    const d = this.data;
+    const sessions = d?.sessions ?? [];
+    const leadTerminal = d?.lead?.terminal;
+    const s = this.leadSession();
+    const rows = [div().px(10).pt(10).pb(2).text_size(11).text_color(t.dim).child("交接")];
+    const button = (id, label, on, solid) => div().id(id).px(8).py(2).rounded(4)
+      .bg(solid ? t.solid : t.raised).text_color(solid ? t.solid_foreground : t.muted).hover((x) => x.bg(solid ? t.solid : t.hover))
+      .text_size(11.5).on_click((_e, cx) => on(cx)).child(label);
+    const pick = (x) => h_flex().id("pick-" + x.terminal).px(10).py(3).gap(6).items_center()
+      .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(paneOfTerminal(x.terminal) ? t.muted : t.dim)
+        .child(terminalLabel(x.terminal) + " · " + cacheOf(x, t, now).text))
+      .child(button("lead-" + x.terminal, "設為主控", (cx) => this.setLead(x, cx)));
+
+    if (!leadTerminal) {
+      rows.push(div().px(10).text_size(11.5).text_color(t.ansi3).child("還沒指定主控：快取快過期時不會自動交接"));
+      if (!sessions.length) rows.push(div().px(10).pt(2).text_size(11).text_color(t.dim).child("這個專案的 Claude 還沒回報（tendr 0.12 以上，重開 Claude Code 後出現）"));
+      rows.push(...sessions.map(pick));
+      return rows;
+    }
+
+    const alive = Boolean(paneOfTerminal(leadTerminal));
+    rows.push(h_flex().px(10).gap(6).items_center()
+      .child(div().text_color(t.ansi4 ?? t.foreground).child("★"))
+      .child(div().flex_1().min_w(0).truncate().text_color(alive ? t.foreground : t.dim)
+        .child("主控 " + terminalLabel(leadTerminal) + (alive ? "" : "（不在視窗裡）")))
+      .child(s && s.phase === "idle" ? button("handoff-now", "立即交接", (cx) => this.handoffNow(s, cx), true) : div()));
+    if (!s) {
+      rows.push(div().px(10).pt(2).text_size(11).text_color(t.dim).child("這個終端機的 Claude 還沒回報；重開 Claude Code 後出現"));
+    } else {
+      const c = cacheOf(s, t, now);
+      const bar = div().w(64).h(6).rounded(3).bg(t.border).child(div().h_full().w(Math.round(64 * c.frac)).rounded(3).bg(c.tone));
+      rows.push(h_flex().px(10).pt(4).gap(6).items_center()
+        .child(bar)
+        .child(div().text_size(11.5).text_color(c.tone).child(c.text))
+        .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(s.phase === "idle" ? t.dim : t.ansi3).child("· " + phaseOf(s))));
+      if (s.lastRequestAt && s.contextPercent < (s.minContextPercent ?? 20) && s.phase === "idle")
+        rows.push(div().px(10).text_size(11).text_color(t.dim).child(`上下文只有 ${s.contextPercent}%，到時會略過自動交接`));
+      if (s.note) rows.push(div().px(10).text_size(11).text_color(t.dim).truncate().child(String(s.note)));
+    }
+    const others = sessions.filter((x) => x.terminal !== leadTerminal);
+    rows.push(h_flex().px(10).pt(4).gap(10).items_center()
+      .child(others.length
+        ? div().id("toggle-lead").text_size(11).text_color(t.dim).hover((x) => x.text_color(t.foreground))
+          .on_click((_e, cx) => { this.leadOpen = !this.leadOpen; cx.notify(); })
+          .child(`${this.leadOpen ? "▾" : "▸"} 換主控（還有 ${others.length} 個 Claude）`)
+        : div())
+      .child(div().flex_1())
+      .child(div().id("clear-lead").text_size(11).text_color(t.dim).hover((x) => x.text_color(t.foreground))
+        .on_click((_e, cx) => this.clearLead(cx)).child("取消主控")));
+    if (this.leadOpen) rows.push(...others.map(pick));
+    return rows;
   }
 
   // hc read 一次要 2～3 秒：上一次還沒回來就不再疊一個
@@ -241,6 +379,8 @@ export default class TendrBoard extends View {
     const urgent = order.filter(needsAttention);
     const active = order.filter((l) => !needsAttention(l) && l.state === "working");
     const quiet = order.filter((l) => !needsAttention(l) && l.state !== "working");
+    rows.push(...this.leadView(t, now));
+    rows.push(div().mx(10).mt(10).h(1).bg(t.border));
     if (!d?.tasksDir) rows.push(div().p(10).text_color(t.dim).child("這個專案沒有設 tasks_dir，任務分頁沒有內容。"));
     if (d?.lanesError) rows.push(div().px(10).text_color(t.ansi3).child(d.lanesError === "no-tasks-dir" ? "找不到 tasks_dir 資料夾" : d.lanesError));
     if (urgent.length) rows.push(section(`需要處理 ${urgent.length}`), ...urgent.map((l) => this.laneRow(l, t, now)));

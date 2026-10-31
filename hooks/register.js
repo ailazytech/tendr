@@ -44,6 +44,15 @@ const LEGACY_STORE_MARK = 'imported:baton'
 const RESUME_DIR = '~/.tendr/resume'
 // 自己離開（/exit、ctrl+c、登出）的不接回；SIGHUP／SIGTERM（關機、重開機）是 other，要接回
 const DELIBERATE_EXITS = ['prompt_input_exit', 'logout']
+// herdr App 的 tendr 看板（app/）跟外掛之間的檔案，同樣放 ~/.tendr：
+// - lead.json：看板指定的主控 { <專案代號>: { terminal, at } }；App 裡不用打 /tendr，被指定的終端機就會自動交接
+// - sessions/<終端機>.json：每個 Claude 的快取倒數與交接狀態，看板顯示用
+// - requests/<終端機>.json：看板按「立即交接」寫 { action: 'handoff', at }，外掛處理完標上 done（$.fs 沒有刪檔）
+const LEAD_FILE = '~/.tendr/lead.json'
+const SESSIONS_DIR = '~/.tendr/sessions'
+const REQUESTS_DIR = '~/.tendr/requests'
+// 看板的請求放太久（例如 Claude 沒在跑的時候按的）就不算
+const REQUEST_MAX_AGE = 2 * MINUTE
 // 整理筆記的對話紀錄最多留幾則（整理失敗一直重試時不會無限長大）
 const TALK_MAX = 400
 
@@ -798,6 +807,12 @@ let activeWindowMs = 24 * HOUR
 let auto = true
 // 這個 session 輸入過 /tendr 才為 true；存在 store，mod 重新載入後仍保留
 let activated = false
+// herdr App 裡被 tendr 看板指定為這個專案的主控（見 LEAD_FILE）；跟 activated 一樣會自動交接
+let appLead = false
+// 專案代號（session 根目錄換成 - 的小寫字串）：lead.json 與 sessions 用它對專案
+let projectKey = ''
+// 上次寫給看板的狀態（不含時間）：沒變就不重寫
+let stateSent = ''
 let armed = true
 let phase = 'idle' // idle | handoff | compacting
 let handoffTurnId = ''
@@ -1516,8 +1531,8 @@ async function runCompact($) {
 }
 
 async function checkTrigger($) {
-  // 只有輸入過 /tendr 的 session（主控 session）才自動交接
-  if (!activated || !auto || !armed || phase !== 'idle' || !lastRequestAt) return
+  // 只有主控 session 才自動交接：輸入過 /tendr，或在 herdr App 的看板上被指定為主控
+  if (!(activated || appLead) || !auto || !armed || phase !== 'idle' || !lastRequestAt) return
   // 5 分鐘的快取每次停下來想一下就會過期，自動交接只會一直打斷，不做
   if (cacheTtl !== '1h') return
   const now = await $.clock.now()
@@ -1678,9 +1693,79 @@ async function importLegacyStore($) {
 
 // ---------- herdr App 重開機後接回 ----------
 
-// 位址可能是 machine/t7：檔名只留安全字元
+// ~/.tendr 底下每個終端機一個檔：位址可能是 machine/t7，檔名只留安全字元
+async function terminalFile($, dir) {
+  return (await expandPath($, dir)) + '/' + herdrSelf.replace(/[^\w.-]/g, '_') + '.json'
+}
+
 async function resumeFile($) {
-  return (await expandPath($, RESUME_DIR)) + '/' + herdrSelf.replace(/[^\w.-]/g, '_') + '.json'
+  return terminalFile($, RESUME_DIR)
+}
+
+// ---------- herdr App 的看板：主控、交接狀態、立即交接 ----------
+
+// 看板指定的主控（lead.json）是不是自己；讀不到（例如正在被改寫）就維持原狀
+async function refreshLead($) {
+  if (herdrKind !== 'hc' || !herdrSelf || !projectKey) return
+  try {
+    const file = await expandPath($, LEAD_FILE)
+    const leads = (await $.fs.exists(file)) ? JSON.parse(await $.fs.read(file)) : {}
+    const lead = leads?.[projectKey]?.terminal === herdrSelf
+    if (lead === appLead) return
+    appLead = lead
+    $.ui.invalidate('ui.render')
+  } catch {}
+}
+
+// 把快取倒數與交接狀態寫給看板（sessions/<終端機>.json）；跟上次一樣就不寫
+async function publishState($) {
+  if (herdrKind !== 'hc' || !herdrSelf || !sessionId) return
+  const state = {
+    terminal: herdrSelf,
+    sessionId,
+    project: projectKey,
+    root: (await $.session.root()).replace(/\\/g, '/'),
+    lead: activated || appLead,
+    auto,
+    armed,
+    phase,
+    working,
+    cacheTtl,
+    ttlMs: ttlMs(),
+    leadMs: LEAD_MS,
+    lastRequestAt,
+    contextPercent: Math.round(usage?.context?.percent ?? 0),
+    minContextPercent: MIN_CONTEXT_PERCENT,
+    note,
+  }
+  const sig = JSON.stringify(state)
+  if (sig === stateSent) return
+  try {
+    await $.fs.write(await terminalFile($, SESSIONS_DIR), JSON.stringify({ ...state, updated: new Date(await $.clock.now()).toISOString() }, null, 2) + '\n')
+    stateSent = sig
+  } catch {
+    // 寫不下來下一秒再試
+  }
+}
+
+// 自己離開時讓看板知道這個終端機沒有 Claude 了
+async function unpublishState($, reason) {
+  stateSent = ''
+  await $.fs.write(await terminalFile($, SESSIONS_DIR), JSON.stringify({ terminal: herdrSelf, ended: reason, updated: new Date(await $.clock.now()).toISOString() }) + '\n')
+}
+
+// 看板按了「立即交接」：處理一次就標上 done，太舊的只標不做
+async function checkRequest($) {
+  if (herdrKind !== 'hc' || !herdrSelf) return
+  try {
+    const file = await terminalFile($, REQUESTS_DIR)
+    if (!(await $.fs.exists(file))) return
+    const req = JSON.parse(await $.fs.read(file))
+    if (!req || typeof req !== 'object' || req.done) return
+    const now = await $.clock.now()
+    await $.fs.write(file, JSON.stringify({ ...req, done: now }) + '\n')
+    if (req.action === 'handoff' && now - Number(req.at) < REQUEST_MAX_AGE) await handoffNow($)
+  } catch {}
 }
 
 // 記下「哪個終端機跑著哪個對話」。App 恢復終端機時給的是新的 shell（pid 會變），
@@ -1966,6 +2051,11 @@ export function register(on, options) {
       if (Object.keys(herdrTargets).length) await refreshHerdr($)
     }
     await setupStatus($)
+    if (herdrKind === 'hc') {
+      // 跟 Claude Code 的專案資料夾同一套代號，看板（app/board-data.mjs）用終端機的資料夾算出同一個
+      projectKey = (await $.session.root()).replace(/[\\/]+$/, '').replace(/[^A-Za-z0-9]/g, '-').toLowerCase()
+      await refreshLead($)
+    }
 
     let tick = 0
     $.clock.every(1000, async () => {
@@ -1977,7 +2067,13 @@ export function register(on, options) {
       // 正在看某條 lane 的子頁：3 秒更新一次即時畫面
       const page = route[route.length - 1]
       if (paneOpen && tab === 'tasks' && page?.view === 'lane' && tick % 3 === 0) await refreshScreen($, page.lane)
+      // herdr App 的看板：5 秒看一次主控有沒有換、2 秒看一次有沒有按「立即交接」，狀態有變就寫給它
+      if (herdrKind === 'hc') {
+        if (tick % 5 === 0) await refreshLead($)
+        if (tick % 2 === 0) await checkRequest($)
+      }
       await checkTrigger($)
+      if (herdrKind === 'hc') await publishState($)
       // 看板關著時不用重畫
       if (paneOpen) $.ui.invalidate('ui.render')
     })
@@ -2100,7 +2196,10 @@ export function register(on, options) {
 
   on('session.end', async ($, e, next) => {
     try {
-      if (herdrKind === 'hc' && herdrSelf && DELIBERATE_EXITS.includes(e.reason)) await forgetTerminal($, e.reason)
+      if (herdrKind === 'hc' && herdrSelf && DELIBERATE_EXITS.includes(e.reason)) {
+        await forgetTerminal($, e.reason)
+        await unpublishState($, e.reason)
+      }
       // /clear、/resume 後行程還在、換了 id，而且不會再有 session.start：下一輪重記
       if (e.reason === 'clear' || e.reason === 'resume') resumeSaved = ''
       if (statusPid) {

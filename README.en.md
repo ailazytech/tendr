@@ -36,7 +36,7 @@ claude plugin install tendr@tendr
 
 Open a new session and type `/tendr`.
 
-- `/tendr`: toggle the board. **Only sessions that have run `/tendr` get automatic handoff** (they become the lead session).
+- `/tendr`: toggle the board. **Only sessions that have run `/tendr` get automatic handoff** (they become the lead session). In the herdr app you can skip `/tendr` and pick the lead on the app's tendr board instead (see "Lead session and auto-handoff (app)").
 - `/handoff`: hand off now without opening the board. Use this when the mouse can't reach the board buttons (non-fullscreen layout).
 - `/distill`: update notes now (see "Auto notes").
 - `/guard`: view and manage guards (see "Guards").
@@ -77,7 +77,7 @@ claude plugin install tendr@tendr
 
 1. Every request from the lead session restarts the cache timer.
 2. With 5 minutes left, and when all of the following hold, the plugin sends an instruction starting with `[auto-handoff]` (`[自動交接]` in the Chinese UI) asking Claude to update the handoff document (or its own lane status file) and memory:
-   - this session has run `/tendr` and auto-handoff is on
+   - this session has run `/tendr` (or, in the herdr app, was picked as the lead on the board) and auto-handoff is on
    - `cache_ttl` is `1h` (no auto-handoff with a 5-minute cache — it would interrupt constantly)
    - context usage is at least 20% (otherwise compaction isn't worth it)
    - the last user input is within `away_hours`, or Claude is still working
@@ -295,6 +295,17 @@ node app/install.mjs --layout my-main   # use your layout's name
 - Commands (`herdr-app do tendr-board.<command>` or `tendr-board:<command>` in `keys.json`): `urgent` jumps to the lane that needs you most, `next` / `prev` move in list order, `back` returns to the list
 - Data is read by `app/board-data.mjs` with the plugin's path rules; install records absolute paths to node and that script, so reinstall after moving the repo. Install also writes `~/.tendr/install.json` (the repo, `resume.mjs` and the board) so other mods can find tendr
 - A lane needs `pane` set to an hc address (`t7`) or name for the live screen; one `hc read` takes about 2–3 s
+
+#### Lead session and auto-handoff (app)
+
+In the app you usually look at the tendr board on the right and never type `/tendr` in Claude, so the lead is picked on the board. The "交接" (handoff) block at the top of the list:
+
+- **No lead yet**: lists the Claude sessions running in this project (terminal address, tab name, time left on the cache), each with "設為主控" (make lead). Other sessions don't hand off automatically, so they can't overwrite the lead's status file
+- **Lead picked**: ★ the lead, a cache countdown bar (green → yellow at 10 min → red at 5 min, seconds under 10 min), what it's doing (hands off at 5 min / handing off (writing status file and memory) / compacting / handed off, waiting for input) and a "立即交接" (hand off now) button; "換主控" (change lead) and "取消主控" (clear lead) below
+- The lead is stored in `~/.tendr/lead.json` (`{ project key: { terminal } }`, the key being the session root with non-alphanumerics replaced by `-`, lowercased), per terminal, so it survives app restarts and resumed conversations. The plugin sees changes within 5 s
+- Conditions and steps are those of "Auto-handoff flow" above (`1h` cache, context at least 20%, within `away_hours`): with 5 minutes left, Claude is asked to update its own lane status file (or the handoff document) and memory, then the conversation is compacted
+- Each Claude writes its cache countdown and handoff state to `~/.tendr/sessions/<terminal>.json` (only on change); the board reads it every 10 s, every 3 s during a handoff. "Hand off now" writes `~/.tendr/requests/<terminal>.json`; the plugin picks it up within 2 s and marks it `done`, ignoring requests older than 2 minutes
+- Needs plugin 0.12 or later; restart Claude Code after updating for it to show up on the board
 
 #### Bringing Claude back after a reboot
 

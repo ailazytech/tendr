@@ -485,6 +485,87 @@ test('不在 herdr App 裡不記接回用的紀錄', async ($, on) => {
   expect([...files.keys()].some((p) => p.includes('/.tendr/'))).toBe(false)
 })
 
+// ── herdr App 的看板：指定主控、交接狀態、立即交接 ──
+const LEAD_FILE = MAC.home + '/.tendr/lead.json'
+const SESSION_FILE = MAC.home + '/.tendr/sessions/t4.json'
+const REQUEST_FILE = MAC.home + '/.tendr/requests/t4.json'
+// 專案代號：session 根目錄換成 - 的小寫字串
+const KEY = MAC.project.toLowerCase()
+
+async function workThenWait($: any, clock: any) {
+  await $.prompt.submit({ text: '幫我改首頁', origin: { kind: 'composer' }, wait: false })
+  await $.turn.start({ turnId: 't1', text: '幫我改首頁' })
+  await step($, 't1')
+  await $.turn.complete({ turnId: 't1', answer: '改好了', durationMs: 1000, isAborted: false, usage: null })
+  await clock.advance(55 * 60 * 1000 + 1000)
+}
+
+test('herdr App：看板指定為主控的終端機不用打 /tendr 也會自動交接，交接狀態寫給看板', async ($, on) => {
+  const { clock, calls, files } = setup(on, { hc: true, projectSettings: LANE_SETTINGS, lanes: LANES })
+  files.set(LEAD_FILE, JSON.stringify({ [KEY]: { terminal: 't4', at: '2026-11-01T00:00:00Z' } }))
+  await start($)
+  await workThenWait($, clock)
+  expect(calls.submits.length).toBe(1)
+  expect(calls.submits[0]).toContain('[自動交接]')
+  expect(calls.submits[0]).toContain(ROOT + '/docs/lanes/status/architect.json')
+  // 交接指示也要更新記憶
+  expect(calls.submits[0]).toContain('記憶')
+  const state = JSON.parse(files.get(SESSION_FILE) ?? '{}')
+  expect(state.lead).toBe(true)
+  expect(state.phase).toBe('handoff')
+  expect(state.project).toBe(KEY)
+  expect(state.ttlMs).toBe(60 * 60 * 1000)
+  // 最後一次請求在那一輪（測試時鐘的起點），看板用它加 ttlMs 算倒數
+  expect(state.lastRequestAt).toBe(START)
+})
+
+test('herdr App：別的終端機是主控時不自動交接；看板改指定自己後幾秒內就生效', async ($, on) => {
+  const { clock, calls, files } = setup(on, { hc: true })
+  files.set(LEAD_FILE, JSON.stringify({ [KEY]: { terminal: 't9' }, 'other-project': { terminal: 't4' } }))
+  await start($)
+  await workThenWait($, clock)
+  expect(calls.submits.length).toBe(0)
+  expect(JSON.parse(files.get(SESSION_FILE) ?? '{}').lead).toBe(false)
+  files.set(LEAD_FILE, JSON.stringify({ [KEY]: { terminal: 't4' } }))
+  await clock.advance(6000)
+  expect(calls.submits.length).toBe(1)
+})
+
+test('herdr App：看板按「立即交接」處理一次並標上 done；放太久的請求只標不做', async ($, on) => {
+  const { clock, calls, files } = setup(on, { hc: true })
+  await start($)
+  files.set(REQUEST_FILE, JSON.stringify({ action: 'handoff', at: START - 10 * 60 * 1000 }))
+  await clock.advance(2000)
+  expect(calls.submits.length).toBe(0)
+  expect(JSON.parse(files.get(REQUEST_FILE) ?? '{}').done).toBeDefined()
+  files.set(REQUEST_FILE, JSON.stringify({ action: 'handoff', at: START + 2000 }))
+  await clock.advance(2000)
+  expect(calls.submits.length).toBe(1)
+  expect(calls.submits[0]).toContain('[自動交接]')
+  // 已經處理過的不會再送
+  await clock.advance(4000)
+  expect(calls.submits.length).toBe(1)
+})
+
+test('herdr App：交接狀態跟著快取更新，自己離開時標成已結束', async ($, on) => {
+  const { clock, files } = setup(on, { hc: true })
+  await start($)
+  await clock.advance(1000)
+  let state = JSON.parse(files.get(SESSION_FILE) ?? '{}')
+  expect(state.terminal).toBe('t4')
+  expect(state.sessionId).toBe('sess-1')
+  expect(state.lead).toBe(false)
+  expect(state.lastRequestAt).toBe(0)
+  await $.turn.start({ turnId: 't1', text: '開始' })
+  await step($, 't1')
+  await clock.advance(1000)
+  state = JSON.parse(files.get(SESSION_FILE) ?? '{}')
+  expect(state.lastRequestAt).toBeGreaterThan(0)
+  expect(state.working).toBe(true)
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: 'sess-1', resume: { id: 'sess-1' } })
+  expect(JSON.parse(files.get(SESSION_FILE) ?? '{}').ended).toBe('prompt_input_exit')
+})
+
 test('自動交接開關會存起來', async ($, on) => {
   const { saved } = setup(on)
   await start($)

@@ -24,7 +24,7 @@ tendr (formerly baton) is a Claude Code hooks plugin (the plugin's `hooks/hooks.
 | `tests/board.test.ts` | Integration tests, using `test`, `mock`, `expect` from `claude-code/testing` |
 | `tests/logic.test.ts` | Pure-function tests for `nudges.js`, `notes.js`, `guards.js` |
 | `app/mod/` | The herdr app board mod (QuickJS + gpui-kit; semicolons like the app's built-in mods). Rendering and `hc` calls only; data comes from `board-data.mjs` |
-| `app/board-data.mjs` | Data for the app board: picks the project, reads lanes, handoff document, memories. Path rules must match `expandPath` in `register.js` |
+| `app/board-data.mjs` | Data for the app board: picks the project, reads lanes, handoff document, memories, the lead (`~/.tendr/lead.json`) and each Claude's handoff state (`~/.tendr/sessions`, written by the plugin's `publishState`). The board's buttons write files through it too (`--lead`, `--handoff`), since mods can't write files. Path rules and the project key must match `expandPath` and `projectKey` in `register.js` |
 | `app/resume.mjs` | Brings Claude back after a reboot: reads `~/.tendr/resume/*.json` (written by the plugin's `rememberTerminal`) and sends `claude --resume` into terminals whose pid changed. Validate anything typed into a shell (session id, paths) |
 | `app/install.mjs` | Installs the mod into `~/.config/herdr-app/mods/tendr-board`, writes `config.js`, optionally adds it to a layout |
 | `README.md` / `README.en.md` | User docs (Chinese / English) |
