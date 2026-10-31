@@ -293,7 +293,7 @@ node app/install.mjs --layout my-main   # use your layout's name
 - Open it with `herdr-app do layout.select '{"stack":"panel-body","child":"tendr"}'` then `herdr-app do layout.show '{"id":"panel"}'`, or build your own button / key. To have the tab bar remember it per space, add `tendr` to the shared `workspace.panels`
 - Which project: the focused terminal's folder (focused, then same tab, then same space), the first one with `tendr.json` (or a pre-rename file)
 - Commands (`herdr-app do tendr-board.<command>` or `tendr-board:<command>` in `keys.json`): `urgent` jumps to the lane that needs you most, `next` / `prev` move in list order, `back` returns to the list
-- Data is read by `app/board-data.mjs` with the plugin's path rules; install records absolute paths to node and that script, so reinstall after moving the repo
+- Data is read by `app/board-data.mjs` with the plugin's path rules; install records absolute paths to node and that script, so reinstall after moving the repo. Install also writes `~/.tendr/install.json` (the repo, `resume.mjs` and the board) so other mods can find tendr
 - A lane needs `pane` set to an hc address (`t7`) or name for the live screen; one `hc read` takes about 2–3 s
 
 #### Bringing Claude back after a reboot
@@ -303,7 +303,7 @@ Closing or updating the herdr app doesn't stop terminals, but after a reboot or 
 - Inside an app terminal, the plugin records "terminal ↔ conversation" at the start of every turn in `~/.tendr/resume/<address>.json`: the terminal's creation time and shell pid, the session id, the project folder, `CLAUDE_CONFIG_DIR`
 - Sessions you leave yourself (`/exit`, ctrl+c, logout) are marked ended and not brought back; shutdowns and reboots (SIGHUP / SIGTERM) are kept
 - `node app/resume.mjs`: for a terminal that is still there with the same creation time but a new pid (replaced by a recovery shell), it sends `claude --resume <id>` into that shell, with the right syntax for PowerShell, cmd or bash-like shells, after going back to the project folder and restoring `CLAUDE_CONFIG_DIR`. Safe to run repeatedly (a terminal is resumed once); `--dry-run` only lists what it would do
-- To run it when the app starts, `exec("node", ["<repo>/app/resume.mjs"])` from a mod that is always shown (e.g. your status bar), and again every minute for the first few minutes (recovery can come a little later)
+- To run it when the app starts, `exec("node", ["<repo>/app/resume.mjs"])` from a mod that is always shown (e.g. your status bar), and again every minute for the first few minutes (recovery can come a little later). The status bar of [herdr-quota](https://github.com/ailazytech/herdr-quota) does this already: it finds `resume.mjs` through `~/.tendr/install.json`
 - Only Claude Code is brought back; launch flags (e.g. `--model`, `--dangerously-skip-permissions`) are not restored
 
 #### Showing whether Claude is busy in the app sidebar (Windows)

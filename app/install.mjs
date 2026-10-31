@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // 把 tendr 看板裝進 herdr App：node app/install.mjs [--layout <名稱>]
 // - 複製 app/mod 到 ~/.config/herdr-app/mods/tendr-board，寫 config.js（node 與 board-data.mjs 的絕對路徑）
+// - 寫 ~/.tendr/install.json（repo、resume.mjs、看板的位置），別的 mod 靠它找到 tendr
 // - --layout：在那個 layout 的右側面板（stack "panel-body"）加一個 tendr 區塊。
 //   App 內建的 layout 是唯讀的（每次啟動會被換回去），請先 Duplicate layout 再裝到複製的那份
 import fs from 'node:fs'
@@ -27,6 +28,15 @@ fs.writeFileSync(
     'export const DATA_SCRIPT = ' + JSON.stringify(slash(path.join(here, 'board-data.mjs'))) + ';\n',
 )
 console.log('已安裝 mod：' + target)
+
+// 讓別的 App mod（例如 herdr-quota 的狀態列）找得到 tendr：重開機後接回要跑 resume.mjs
+const installInfo = path.join(os.homedir(), '.tendr', 'install.json')
+fs.mkdirSync(path.dirname(installInfo), { recursive: true })
+fs.writeFileSync(
+  installInfo,
+  JSON.stringify({ repo: slash(path.dirname(here)), resume: slash(path.join(here, 'resume.mjs')), board: slash(target) }, null, 2) + '\n',
+)
+console.log('已記下 tendr 的位置：' + installInfo)
 
 const i = process.argv.indexOf('--layout')
 if (i >= 0) {
