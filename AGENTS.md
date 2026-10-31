@@ -72,7 +72,7 @@ tendr（原名 baton）是 Claude Code 的 hooks 外掛（plugin 的 `hooks/hook
 - **註解**：寫「為什麼」，尤其是引擎行為的限制（例如「command.run 裡不能直接 prompt.submit」）
 - **路徑**：內部一律轉成 `/` 分隔；比對用 `samePath`（不分大小寫）。新功能要同時考慮 macOS（`HOME`）與 Windows（`USERPROFILE`、磁碟代號）
 - **錯誤**：讀檔失敗不要丟例外讓看板壞掉，寫到 `note` 或對應的 `*Error` 變數，在看板上顯示
-- **外部指令**：只透過 `$.process.run` 呼叫 herdr；執行檔用 `herdrBin`（`HERDR_BIN_PATH` 或 `herdr`；herdr App 裡是 `hc`）。兩種環境由 `herdrKind`（`herdr`／`hc`）區分，App 的 agent 先用 `hcAgents` 轉成 herdr agent list 的形狀，畫面與判斷只寫一套
+- **外部指令**：一律透過 `$.process.run`。使用者設定的 `sync_command` 原樣執行（只換 `{tasks_dir}`），不擋壓縮；herdr 的執行檔用 `herdrBin`（`HERDR_BIN_PATH` 或 `herdr`；herdr App 裡是 `hc`）。兩種環境由 `herdrKind`（`herdr`／`hc`）區分，App 的 agent 先用 `hcAgents` 轉成 herdr agent list 的形狀，畫面與判斷只寫一套
 - **重畫**：狀態改變後呼叫 `$.ui.invalidate('ui.render')`；看板關著時 tick 不重畫
 - **持久化**：跨重載要保留的值用 `$.store`，key 帶 `sessionId`（例如 `times:<id>`、`herdr:<id>`）
 - **設定**：新增使用者設定要同時改 `plugin.json` 的 `userConfig`、`register()` 開頭讀 `options` 的地方、兩份 README 的設定表

@@ -98,10 +98,12 @@ function setup(
   })
   const memoryFiles = extra.memoryFiles ?? MEMORY_FILES
   // herdr agent list（App 是 hc ls）的回傳可在測試中改變；runs 記錄查了幾次，argv 記錄每一次呼叫
-  const herdr = { agents: HERDR_AGENTS as any[], terminals: HC_TERMINALS as any[], runs: 0, argv: [] as string[][], screen: '● 正在跑測試\n  ⎿ 12 pass\n' }
+  // sync：專案設定的 sync_command（假的 zjnote-mcp）回什麼
+  const herdr = { agents: HERDR_AGENTS as any[], terminals: HC_TERMINALS as any[], runs: 0, argv: [] as string[][], screen: '● 正在跑測試\n  ⎿ 12 pass\n', sync: { exitCode: 0, stdout: '', stderr: '' } }
   on('process.run', ($: any, e: any) => {
     const argv = e.argv ?? e.command ?? e.args ?? []
     herdr.argv.push(argv)
+    if (argv[0] === 'zjnote-mcp') return { value: herdr.sync }
     if (argv[0] === 'hc') {
       if (argv[1] === 'read') return { value: { exitCode: 0, stdout: herdr.screen, stderr: '' } }
       // 自己的終端機：建立時間與 shell 的 pid 是接回時認終端機用的
@@ -1255,4 +1257,31 @@ test('/guard suggest：放進專案後又被糾正的規則起草成守門；範
   const saved = JSON.parse(files.get(GUARDS) ?? '[]')
   expect(saved.length).toBe(1)
   expect(saved[0]).toMatchObject({ id: 1, rule: 'no-push', state: 'proposed', mode: 'deny' })
+})
+
+test('壓縮前跑專案設定的 sync_command：{tasks_dir} 換成 lane 資料夾，結果跳通知', async ($, on) => {
+  const settings = { ...LANE_SETTINGS, sync_command: ['zjnote-mcp', 'pm-sync', '{tasks_dir}', '--project', '官網'] }
+  const { clock, calls, herdr } = setup(on, { projectSettings: settings, lanes: LANES })
+  herdr.sync = { exitCode: 0, stdout: 'baton 同步：3 條 lane（新增 3、更新 0、沒變 0），3 個事件\n', stderr: '' }
+  await start($)
+  await $.prompt.submit({ text: '繼續', origin: { kind: 'composer' }, wait: false })
+  await $.session.compact({ trigger: 'manual', messages: [{ role: 'user', text: '舊對話', toolUses: [] }] })
+  await clock.advance(10)
+  expect(herdr.argv.filter((a) => a[0] === 'zjnote-mcp')).toEqual([['zjnote-mcp', 'pm-sync', LANES_DIR, '--project', '官網']])
+  expect(calls.toasts).toContain('baton 同步：3 條 lane（新增 3、更新 0、沒變 0），3 個事件')
+
+  // 失敗：stdout 沒東西就用 stderr 最後一行（前面的是警告）
+  herdr.sync = { exitCode: 1, stdout: '', stderr: 'zjnote-mcp: 版本快照沒有打開\nzjnote-mcp pm-sync：要用 --project 指定專案\n' }
+  await $.session.compact({ trigger: 'manual', messages: [{ role: 'user', text: '舊對話', toolUses: [] }] })
+  await clock.advance(10)
+  expect(calls.toasts).toContain('同步指令失敗：zjnote-mcp pm-sync：要用 --project 指定專案')
+})
+
+test('sync_command 不是字串陣列就不跑', async ($, on) => {
+  const { clock, herdr } = setup(on, { projectSettings: { ...LANE_SETTINGS, sync_command: 'zjnote-mcp pm-sync' }, lanes: LANES })
+  await start($)
+  await $.prompt.submit({ text: '繼續', origin: { kind: 'composer' }, wait: false })
+  await $.session.compact({ trigger: 'manual', messages: [{ role: 'user', text: '舊對話', toolUses: [] }] })
+  await clock.advance(10)
+  expect(herdr.argv.some((a) => a[0] === 'zjnote-mcp')).toBe(false)
 })

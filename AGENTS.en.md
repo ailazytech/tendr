@@ -72,7 +72,7 @@ Top to bottom:
 - **Comments**: explain *why*, especially engine constraints (e.g. "can't call prompt.submit inside command.run")
 - **Paths**: always normalized to `/`; compare with `samePath` (case-insensitive). New features must handle macOS (`HOME`) and Windows (`USERPROFILE`, drive letters)
 - **Errors**: a failed read must not throw and break the board; store it in `note` or the relevant `*Error` variable and show it
-- **External commands**: herdr is called only through `$.process.run`, using `herdrBin` (`HERDR_BIN_PATH` or `herdr`; `hc` in the herdr app). `herdrKind` (`herdr` / `hc`) tells the two apart; app agents are first mapped to the herdr agent list shape by `hcAgents`, so rendering and logic stay single
+- **External commands**: always through `$.process.run`. The user's `sync_command` runs as given (only `{tasks_dir}` is replaced) and never blocks compaction; herdr is called with `herdrBin` (`HERDR_BIN_PATH` or `herdr`; `hc` in the herdr app). `herdrKind` (`herdr` / `hc`) tells the two apart; app agents are first mapped to the herdr agent list shape by `hcAgents`, so rendering and logic stay single
 - **Redraw**: call `$.ui.invalidate('ui.render')` after state changes; the tick doesn't redraw while the board is closed
 - **Persistence**: values that must survive reloads go in `$.store`, keyed with `sessionId` (e.g. `times:<id>`, `herdr:<id>`)
 - **Settings**: a new user setting touches `userConfig` in `plugin.json`, the `options` reads at the top of `register()`, and the settings table in both READMEs

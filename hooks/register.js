@@ -28,7 +28,7 @@ const HERDR_GRACE_MS = 60 * 1000
 // 相對路徑以專案根目錄為準
 const DEFAULT_MEMORY_DIR = '{config}/projects/{project}/memory'
 const DEFAULT_HANDOFF_PATH = 'docs/HANDOFF.md'
-// 每個專案的覆寫檔（不放進專案 repo）：{ handoff_path, handoff_section, compact_path, memory_dir, tasks_dir, tasks_self }
+// 每個專案的覆寫檔（不放進專案 repo）：{ handoff_path, handoff_section, compact_path, memory_dir, tasks_dir, tasks_self, sync_command }
 const PROJECT_SETTINGS = '{config}/projects/{project}/tendr.json'
 // 改名前的覆寫檔（baton，更早是 session-board）：沒有 tendr.json 時依序退回讀這些，舊專案不用搬
 const LEGACY_PROJECT_SETTINGS = ['{config}/projects/{project}/baton.json', '{config}/projects/{project}/session-board.json']
@@ -159,6 +159,8 @@ const I18N = {
     compactSkipped: (why) => '壓縮被略過：' + why,
     compactDone: '交接完成並已壓縮',
     compactFail: (err) => '壓縮失敗：' + err,
+    syncDone: (out) => out || '已執行同步指令',
+    syncFail: (err) => '同步指令失敗：' + err,
     contextTooSmall: (p) => '上下文只有 ' + p + '%，略過自動交接',
     handoffAborted: '交接那一輪被中斷，本次不壓縮',
     handoffWritten: '交接文件已寫好，準備壓縮',
@@ -469,6 +471,8 @@ const I18N = {
     compactSkipped: (why) => 'Compaction skipped: ' + why,
     compactDone: 'Handed off and compacted',
     compactFail: (err) => 'Compaction failed: ' + err,
+    syncDone: (out) => out || 'Sync command finished',
+    syncFail: (err) => 'Sync command failed: ' + err,
     contextTooSmall: (p) => 'Context only ' + p + '%, skipping auto-handoff',
     handoffAborted: 'Handoff turn was interrupted; not compacting',
     handoffWritten: 'Handoff written; compacting',
@@ -748,6 +752,8 @@ let tasks = {}
 // lane 狀態檔
 let tasksDir = ''
 let selfLane = 'architect'
+// 每次壓縮對話前執行的指令（專案覆寫檔的 sync_command，argv 陣列；{tasks_dir} 換成 lane 資料夾）
+let syncCommand = []
 let lanes = []
 let lanesError = ''
 let laneStates = {} // lane → 上次看到的 state，用來在變成等你／待審／失敗時提醒
@@ -958,6 +964,8 @@ async function resolvePaths($) {
   compactFile = projectSettings.compact_path ? await expandPath($, projectSettings.compact_path) : defaultCompact
   tasksDir = pick('tasks_dir', '') ? await expandPath($, projectSettings.tasks_dir) : ''
   selfLane = pick('tasks_self', 'architect').trim()
+  const sync = projectSettings.sync_command
+  syncCommand = Array.isArray(sync) && sync.length > 0 && sync.every((a) => typeof a === 'string') ? sync : []
   guardsFile = await expandPath($, GUARDS_FILE)
 }
 
@@ -1463,6 +1471,21 @@ async function handoffNow($) {
   }
   const remaining = lastRequestAt ? lastRequestAt + ttlMs() - (await $.clock.now()) : LEAD_MS
   await startHandoff($, Math.max(remaining, 60000))
+}
+
+// 壓縮前的同步指令（例如把 lane 狀態檔寫進別的工具）：不等它跑完、不擋壓縮，結果只跳通知
+async function runSync($) {
+  if (!syncCommand.length) return
+  const argv = syncCommand.map((a) => a.replaceAll('{tasks_dir}', tasksDir))
+  const lines = (s) => String(s ?? '').split('\n').map((l) => l.trim()).filter(Boolean)
+  try {
+    const r = await $.process.run(argv, { timeoutMs: 60000 })
+    // 成功看 stdout 第一行；失敗時 stdout 有摘要就用它，否則是 stderr 最後一行（前面可能是警告）
+    if (r.exitCode === 0) $.ui.toast(T.syncDone(clip(lines(r.stdout)[0] ?? '', 80)))
+    else $.ui.toast(T.syncFail(clip(lines(r.stdout)[0] ?? lines(r.stderr).at(-1) ?? 'exit ' + r.exitCode, 80)))
+  } catch (err) {
+    $.ui.toast(T.syncFail(clip(String(err), 80)))
+  }
 }
 
 async function runCompact($) {
@@ -2086,6 +2109,8 @@ export function register(on, options) {
 
   // 壓縮後舊的快取前綴就不再使用，倒數歸零，等下一次請求重新建立
   on('session.compact', async ($, e, next) => {
+    // 主對話真的要壓縮時跑同步指令（precompute 只是先算摘要）；手動 /compact 也算
+    if (!e.agentId && e.trigger !== 'precompute') void runSync($)
     const result = await next(e)
     if (!e.agentId && e.trigger !== 'precompute' && !result.skip) {
       lastRequestAt = 0

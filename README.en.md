@@ -151,6 +151,7 @@ Put overrides in `{config}/projects/{project}/tendr.json` (outside the project r
 - `compact_path`: where the compaction summary goes. Defaults to next to the global `handoff_path`, so switching to a project doc doesn't write summaries into the repo
 - `tasks_dir`: lane status folder; enables the Tasks tab
 - `tasks_self`: the lead session's own status file name (default `architect`)
+- `sync_command`: a command run before every compaction (auto-handoff or manual `/compact`), as an array (executable first); `{tasks_dir}` becomes the lane folder. It doesn't block compaction; success or failure shows a toast. For example, syncing lanes into ZJNote: `"sync_command": ["/Applications/…/zjnote-mcp", "pm-sync", "{tasks_dir}", "--project", "Website"]`
 
 ### Lane status files
 
