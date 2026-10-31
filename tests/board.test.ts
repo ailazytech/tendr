@@ -202,7 +202,9 @@ function setup(
     const name = norm(e.path).split('/').pop()
     return { value: memoryFiles[name] ?? '' }
   })
-  on('fs.stat', () => ({ value: { kind: 'file', size: 10, mtimeMs: START, isLink: false } }))
+  // 檔案的修改時間：測試可以改（路徑 → 毫秒），沒設就是 START
+  const mtimes = new Map<string, number>()
+  on('fs.stat', ($: any, e: any) => ({ value: { kind: 'file', size: 10, mtimeMs: mtimes.get(norm(e.path)) ?? START, isLink: false } }))
   on('command.register', () => ({ value: undefined }))
   // 引擎在輸入框上方本身什麼都不畫
   on('ui.render', ($: any, e: any) => $.ui.resolve(e).Box({ children: [] }))
@@ -245,7 +247,7 @@ function setup(
   on('classic.Stop', () => ({}))
   on('classic.Notification', () => ({}))
   on('session.end', ($: any, e: any) => ({ sessionId: e.sessionId }))
-  return { clock, saved, calls, files, herdr, tools }
+  return { clock, saved, calls, files, herdr, tools, mtimes }
 }
 
 async function start($: any) {
@@ -1441,6 +1443,41 @@ test('壓縮前跑專案設定的 sync_command：{tasks_dir} 換成 lane 資料�
   await $.session.compact({ trigger: 'manual', messages: [{ role: 'user', text: '舊對話', toolUses: [] }] })
   await clock.advance(10)
   expect(calls.toasts).toContain('同步指令失敗：zjnote-mcp pm-sync：要用 --project 指定專案')
+})
+
+test('每輪結束 lane 檔有變才跑 sync_command：成功不跳通知、失敗才跳，失敗後沒再變就不重跑', async ($, on) => {
+  const settings = { ...LANE_SETTINGS, sync_command: ['zjnote-mcp', 'pm-sync', '{tasks_dir}'] }
+  const { clock, calls, herdr, mtimes } = setup(on, { projectSettings: settings, lanes: LANES })
+  herdr.sync = { exitCode: 0, stdout: 'baton 同步：3 條 lane（新增 3、更新 0、沒變 0），3 個事件\n', stderr: '' }
+  const syncs = () => herdr.argv.filter((a) => a[0] === 'zjnote-mcp').length
+  const turn = async (id: string) => {
+    await $.prompt.submit({ text: '繼續', origin: { kind: 'composer' }, wait: false })
+    await $.turn.start({ turnId: id, text: '繼續' })
+    await step($, id)
+    await $.turn.complete({ turnId: id, answer: '好了', durationMs: 1000, isAborted: false, usage: null })
+    await clock.advance(10)
+  }
+  await start($)
+  // 還沒同步過：第一輪結束就跑，成功不跳通知
+  await turn('t1')
+  expect(syncs()).toBe(1)
+  expect(calls.toasts.some((t) => t.includes('baton 同步'))).toBe(false)
+  // lane 檔沒變：不跑
+  await turn('t2')
+  expect(syncs()).toBe(1)
+  // 改了一條：跑；失敗跳通知
+  mtimes.set(LANES_DIR + '/architect.json', START + 60000)
+  herdr.sync = { exitCode: 1, stdout: '', stderr: 'zjnote-mcp pm-sync：找不到 MyGUI\n' }
+  await turn('t3')
+  expect(syncs()).toBe(2)
+  expect(calls.toasts).toContain('同步指令失敗：zjnote-mcp pm-sync：找不到 MyGUI')
+  // 失敗後 lane 檔沒再變：不重跑
+  await turn('t4')
+  expect(syncs()).toBe(2)
+  // 壓縮前照樣跑
+  await $.session.compact({ trigger: 'manual', messages: [{ role: 'user', text: '舊對話', toolUses: [] }] })
+  await clock.advance(10)
+  expect(syncs()).toBe(3)
 })
 
 test('sync_command 不是字串陣列就不跑', async ($, on) => {

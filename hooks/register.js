@@ -761,8 +761,11 @@ let tasks = {}
 // lane 狀態檔
 let tasksDir = ''
 let selfLane = 'architect'
-// 每次壓縮對話前執行的指令（專案覆寫檔的 sync_command，argv 陣列；{tasks_dir} 換成 lane 資料夾）
+// 同步指令（專案覆寫檔的 sync_command，argv 陣列；{tasks_dir} 換成 lane 資料夾）：壓縮對話前一定跑，每輪結束時 lane 檔有變也跑
 let syncCommand = []
+// 上次同步時 lane 資料夾的樣子（檔名＋修改時間）；同步中不再開第二個
+let syncSig = ''
+let syncing = false
 let lanes = []
 let lanesError = ''
 let laneStates = {} // lane → 上次看到的 state，用來在變成等你／待審／失敗時提醒
@@ -1495,19 +1498,40 @@ async function handoffNow($) {
   await startHandoff($, Math.max(remaining, 60000))
 }
 
-// 壓縮前的同步指令（例如把 lane 狀態檔寫進別的工具）：不等它跑完、不擋壓縮，結果只跳通知
-async function runSync($) {
-  if (!syncCommand.length) return
+// lane 資料夾的樣子：每個 .json 的檔名與修改時間
+async function lanesSig($) {
+  const entries = await $.fs.list(tasksDir)
+  const names = entries.filter((x) => x.kind === 'file' && x.name.endsWith('.json')).map((x) => x.name).sort()
+  const parts = []
+  for (const name of names) parts.push(name + ':' + (await $.fs.stat(tasksDir + '/' + name)).mtimeMs)
+  return parts.join('|')
+}
+
+// 同步指令（例如把 lane 狀態檔寫進別的工具）：不等它跑完、不擋壓縮。quiet（每輪結束跑的）成功不跳通知，失敗照樣跳
+async function runSync($, quiet = false) {
+  if (!syncCommand.length || syncing) return
+  syncing = true
   const argv = syncCommand.map((a) => a.replaceAll('{tasks_dir}', tasksDir))
   const lines = (s) => String(s ?? '').split('\n').map((l) => l.trim()).filter(Boolean)
   try {
+    // 先記下這次同步的樣子：失敗了也等 lane 檔再變（或壓縮）才重跑，免得每輪跳一次失敗通知
+    syncSig = await lanesSig($).catch(() => '')
     const r = await $.process.run(argv, { timeoutMs: 60000 })
     // 成功看 stdout 第一行；失敗時 stdout 有摘要就用它，否則是 stderr 最後一行（前面可能是警告）
-    if (r.exitCode === 0) $.ui.toast(T.syncDone(clip(lines(r.stdout)[0] ?? '', 80)))
-    else $.ui.toast(T.syncFail(clip(lines(r.stdout)[0] ?? lines(r.stderr).at(-1) ?? 'exit ' + r.exitCode, 80)))
+    if (r.exitCode !== 0) $.ui.toast(T.syncFail(clip(lines(r.stdout)[0] ?? lines(r.stderr).at(-1) ?? 'exit ' + r.exitCode, 80)))
+    else if (!quiet) $.ui.toast(T.syncDone(clip(lines(r.stdout)[0] ?? '', 80)))
   } catch (err) {
     $.ui.toast(T.syncFail(clip(String(err), 80)))
+  } finally {
+    syncing = false
   }
+}
+
+// 每輪結束：lane 檔跟上次同步時不一樣才跑
+async function syncIfChanged($) {
+  if (!syncCommand.length || !tasksDir || syncing) return
+  const sig = await lanesSig($).catch(() => '')
+  if (sig && sig !== syncSig) await runSync($, true)
 }
 
 async function runCompact($) {
@@ -2248,6 +2272,8 @@ export function register(on, options) {
       // 使用者中斷是 idle、答完是 done（App 標成「完成」，看過就變 idle）、出錯是 error
       const aborted = e.isAborted === true || e.reason === 'aborted'
       reportStatus($, aborted ? 'idle' : e.reason === 'error' || e.reason === 'refusal' ? 'error' : 'done')
+      // 這一輪改了 lane 檔就同步出去（不等）
+      void syncIfChanged($)
       if (distillOn && e.answer && !(phase === 'handoff' && e.turnId === handoffTurnId)) {
         try {
           await recordTalk($, 'assistant', e.answer)

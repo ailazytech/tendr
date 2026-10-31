@@ -151,7 +151,7 @@ claude plugin install tendr@tendr
 - `compact_path`：壓縮摘要位置，預設放在全域 `handoff_path` 旁邊（不會因為改用專案文件而寫進 repo）
 - `tasks_dir`：lane 狀態檔資料夾，設了就有「任務」分頁
 - `tasks_self`：主控 session 自己的狀態檔名（預設 `architect`）
-- `sync_command`：每次壓縮對話前（自動交接或手動 `/compact`）執行的指令，寫成陣列（第一個是執行檔），`{tasks_dir}` 會換成 lane 資料夾。不等它跑完、不擋壓縮，成功或失敗都跳通知。例如把 lane 同步進紙間：`"sync_command": ["C:\\…\\zjnote-mcp.exe", "pm-sync", "{tasks_dir}", "--project", "官網改版"]`
+- `sync_command`：同步 lane 用的指令，寫成陣列（第一個是執行檔），`{tasks_dir}` 會換成 lane 資料夾。每次壓縮對話前（自動交接或手動 `/compact`）一定跑，成功或失敗都跳通知；主控每一輪結束時，lane 檔（檔名或修改時間）跟上次同步時不一樣也會跑，這種成功不跳通知、失敗才跳。都不等它跑完、不擋壓縮。例如把 lane 同步進紙間：`"sync_command": ["C:\\…\\zjnote-mcp.exe", "pm-sync", "{tasks_dir}", "--project", "官網改版"]`
 
 ### lane 狀態檔
 
