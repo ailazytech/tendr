@@ -826,6 +826,13 @@ let lastDistill = null // { at, why, added: [], confirmed: [], rejected: [], err
 let resumeSaved = ''
 let terminalInfo = null
 
+// Windows 的 herdr App 裡替 Claude 回報 OSC 7501（見 setupStatus）：statusPid 是終端機裡 shell 的 pid，0 是不回報
+let statusPid = 0
+let statusWant = '' // 下一個要送的 payload（只留最新的）
+let statusFlight = '' // 正在送的
+let statusSent = ''
+let statusBusy = false
+
 // 守門
 let guardsFile = ''
 let guards = []
@@ -1683,12 +1690,7 @@ async function rememberTerminal($) {
   try {
     const id = await $.session.id()
     if (!id || id === resumeSaved) return
-    if (!terminalInfo) {
-      const r = await $.process.run([herdrBin, 'get', herdrSelf, '--json'], { timeoutMs: 5000 })
-      if (r.exitCode !== 0) return
-      const t = JSON.parse(r.stdout)
-      terminalInfo = { created: t.created_ms ?? null, pid: t.pid ?? null }
-    }
+    if (!(await ensureTerminalInfo($))) return
     const record = {
       terminal: herdrSelf,
       ...terminalInfo,
@@ -1709,6 +1711,66 @@ async function forgetTerminal($, reason) {
   await $.fs.write(await resumeFile($), JSON.stringify({ terminal: herdrSelf, ended: reason, updated: new Date(await $.clock.now()).toISOString() }) + '\n')
   resumeSaved = ''
 }
+
+// 自己終端機的建立時間與 shell 的 pid（接回與狀態回報都要），問過一次就記著
+async function ensureTerminalInfo($) {
+  if (terminalInfo) return terminalInfo
+  const r = await $.process.run([herdrBin, 'get', herdrSelf, '--json'], { timeoutMs: 5000 })
+  if (r.exitCode !== 0) return null
+  const t = JSON.parse(r.stdout)
+  terminalInfo = { created: t.created_ms ?? null, pid: t.pid ?? null }
+  return terminalInfo
+}
+
+// ---------- herdr App 的狀態回報（Windows）----------
+
+// Claude Code 自己會回報 OSC 7501，但要先問到終端機支援；Windows 的 ConPTY 把回覆濾掉，它就不報了，
+// App 的側邊欄看不到 Claude 在不在忙。只在 Windows 的 herdr App 裡替它報（hooks/osc7501.ps1），
+// 其他平台它自己會報，兩邊一起報會互相蓋掉
+async function setupStatus($) {
+  statusPid = 0
+  if (herdrKind !== 'hc' || (await $.env.get('OS')) !== 'Windows_NT') return
+  try {
+    statusPid = (await ensureTerminalInfo($))?.pid ?? 0
+  } catch {
+    statusPid = 0
+  }
+  reportStatus($, 'idle')
+}
+
+// 一次要 0.4 秒左右：依序送、只留最新的一筆，免得後發先至
+function reportStatus($, state, kind) {
+  if (!statusPid) return
+  statusWant = state === 'clear' ? 'state=clear' : 'state=' + state + (kind ? ':kind=' + kind : '') + ':app=claude'
+  if (!statusBusy) void pumpStatus($)
+}
+
+function statusArgv($, payload) {
+  return ['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $.plugin.root + '/hooks/osc7501.ps1', '-TargetPid', String(statusPid), '-Payload', payload]
+}
+
+async function pumpStatus($) {
+  statusBusy = true
+  try {
+    while (statusWant) {
+      const payload = statusWant
+      statusWant = ''
+      if (payload === statusSent) continue
+      statusFlight = payload
+      const r = await $.process.run(statusArgv($, payload), { timeoutMs: 15000 })
+      if (r.exitCode === 0) statusSent = payload
+      statusFlight = ''
+    }
+  } catch {
+    // 報不出去就算了，不影響對話
+  } finally {
+    statusFlight = ''
+    statusBusy = false
+  }
+}
+
+// 最新的狀態（正要報、正在報或已報的）是不是等使用者
+const statusBlocked = () => (statusWant || statusFlight || statusSent).startsWith('state=blocked')
 
 // ---------- 守門 ----------
 
@@ -1903,6 +1965,7 @@ export function register(on, options) {
       // 先查一次，之後是否繼續查看指揮過的 agent 還在不在忙
       if (Object.keys(herdrTargets).length) await refreshHerdr($)
     }
+    await setupStatus($)
 
     let tick = 0
     $.clock.every(1000, async () => {
@@ -2028,6 +2091,7 @@ export function register(on, options) {
       // 引擎會在外掛送的訊息前加「The tendr plugin sent a message: 」，所以不能用 startsWith
       if (phase === 'handoff' && !handoffTurnId && HANDOFF_PREFIXES.some((p) => String(e.text ?? '').includes(p))) handoffTurnId = e.turnId
       $.ui.invalidate('ui.render')
+      reportStatus($, 'working')
       // 有送過 prompt 才有對話紀錄可接；/clear 之後換了 id 也在這裡補記
       await rememberTerminal($)
     }
@@ -2039,9 +2103,25 @@ export function register(on, options) {
       if (herdrKind === 'hc' && herdrSelf && DELIBERATE_EXITS.includes(e.reason)) await forgetTerminal($, e.reason)
       // /clear、/resume 後行程還在、換了 id，而且不會再有 session.start：下一輪重記
       if (e.reason === 'clear' || e.reason === 'resume') resumeSaved = ''
+      if (statusPid) {
+        if (e.reason === 'clear' || e.reason === 'resume') {
+          reportStatus($, 'idle')
+        } else {
+          // 要離開了：清掉記錄，免得側邊欄一直掛著「完成」。不排隊，直接在結束的時限內送
+          statusWant = ''
+          await $.process.run(statusArgv($, 'state=clear'), { timeoutMs: 1200 })
+        }
+      }
     } catch {
       // 結束時只有很短的時間，寫不下來就算了
     }
+    return next(e)
+  })
+
+  // 跳出權限確認或問題時，App 顯示「等你」
+  on('classic.Notification', async ($, e, next) => {
+    if (e.notification_type === 'permission_prompt') reportStatus($, 'blocked', 'permission')
+    if (e.notification_type === 'elicitation_dialog') reportStatus($, 'blocked', 'question')
     return next(e)
   })
 
@@ -2066,6 +2146,9 @@ export function register(on, options) {
       if (e.answer) lastAnswer = e.answer
       // 被中斷的回合沒有 Stop：清掉這一輪的改檔紀錄，免得算到下一輪
       if (e.isAborted) work = freshWork()
+      // 使用者中斷是 idle、答完是 done（App 標成「完成」，看過就變 idle）、出錯是 error
+      const aborted = e.isAborted === true || e.reason === 'aborted'
+      reportStatus($, aborted ? 'idle' : e.reason === 'error' || e.reason === 'refusal' ? 'error' : 'done')
       if (distillOn && e.answer && !(phase === 'handoff' && e.turnId === handoffTurnId)) {
         try {
           await recordTalk($, 'assistant', e.answer)
@@ -2164,7 +2247,10 @@ export function register(on, options) {
         return { deny: T.guardHead(hit) + '\n' + T.guardDenyHint(hit.id) }
       }
     }
+    // AskUserQuestion 是在等使用者回答；權限確認由 classic.Notification 報。工具跑完就是使用者回應過了
+    if (!e.agentId && e.tool === 'AskUserQuestion') reportStatus($, 'blocked', 'question')
     let result = watchCall(e, await next(e))
+    if (!e.agentId && statusBlocked()) reportStatus($, 'working')
     if (hit && result && result.deny === undefined) result = { ...result, context: [...(result.context ?? []), T.guardHead(hit)] }
     const commandPattern = herdrKind === 'hc' ? /(?:^|[\s"'(/\\])hc(?:\.exe)?["']?\s/ : /\bherdr/
     if (herdrEnv && !e.agentId && e.tool === 'Bash' && typeof e.command === 'string' && commandPattern.test(e.command)) {

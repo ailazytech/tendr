@@ -16,6 +16,7 @@ tendr (formerly baton) is a Claude Code hooks plugin (the plugin's `hooks/hooks.
 | `hooks/nudges.js` | Nudge logic: failure signatures, edit/verify tracking, "done" claims, reply-language detection. Pure functions |
 | `hooks/notes.js` | Auto-notes logic: parse and validate the notes model's output, rewrite memory frontmatter, said-3-times candidates. Pure functions |
 | `hooks/guards.js` | Guard logic: match tool arguments, pick candidates, validate drafts. Pure functions |
+| `hooks/osc7501.ps1` | Reports OSC 7501 for Claude in the herdr app on Windows: `AttachConsole` to the console of the terminal's shell and write there. Keep it UTF-8 with BOM (PowerShell 5.1) and the C# part ASCII-only |
 | `hooks/hooks.json` | Declares the module `./register.js` (which imports the other three) |
 | `.claude-plugin/plugin.json` | Plugin name, version, `userConfig` (settings shown in `/config`) |
 | `.claude-plugin/marketplace.json` | Lets this repo itself be added as a marketplace |

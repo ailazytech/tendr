@@ -16,6 +16,7 @@ tendr（原名 baton）是 Claude Code 的 hooks 外掛（plugin 的 `hooks/hook
 | `hooks/nudges.js` | 防呆提醒的判斷：連續失敗的簽名、改檔與驗證的紀錄、「完成了」的說法、回覆語言判斷。純函式 |
 | `hooks/notes.js` | 自動整理筆記的判斷：解析與驗證整理模型的輸出、改寫記憶檔 frontmatter、講 3 次的候選。純函式 |
 | `hooks/guards.js` | 守門的判斷：比對工具參數、起草候選、驗證模型的草稿。純函式 |
+| `hooks/osc7501.ps1` | Windows 的 herdr App 裡替 Claude 回報 OSC 7501：`AttachConsole` 到終端機裡 shell 的主控台寫。要存成有 BOM 的 UTF-8（PowerShell 5.1），C# 那段只放 ASCII |
 | `hooks/hooks.json` | 宣告模組 `./register.js`（其他三個由它 import） |
 | `.claude-plugin/plugin.json` | 外掛名稱、版本、`userConfig`（`/config` 裡的設定項） |
 | `.claude-plugin/marketplace.json` | 讓這個 repo 本身可以當 marketplace 加入 |

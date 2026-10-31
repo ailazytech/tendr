@@ -91,7 +91,7 @@ function setup(
   const settingsFile = slash(os.home) + '/.claude/projects/' + os.project + settingsName
   const lanesDir = base + '/docs/lanes/status'
   mock.env(on, {
-    ...(extra.windows ? { USERPROFILE: WIN.home } : { HOME: MAC.home }),
+    ...(extra.windows ? { USERPROFILE: WIN.home, OS: 'Windows_NT' } : { HOME: MAC.home }),
     ...(extra.locale ? { LANG: extra.locale } : {}),
     ...(extra.herdr ? { HERDR_ENV: '1', HERDR_BIN_PATH: HERDR_BIN, HERDR_PANE_ID: 'w9:p7', HERDR_WORKSPACE_ID: 'w9' } : {}),
     ...(extra.hc ? { HC_TERMINAL_ID: 't4' } : {}),
@@ -243,6 +243,7 @@ function setup(
     return { turnId: e.turnId, index: e.index, answer: tools.answer, toolUses: tools.toolUses, stopReason: 'end_turn', usage: null }
   })
   on('classic.Stop', () => ({}))
+  on('classic.Notification', () => ({}))
   on('session.end', ($: any, e: any) => ({ sessionId: e.sessionId }))
   return { clock, saved, calls, files, herdr, tools }
 }
@@ -391,6 +392,71 @@ test('herdr App 裡：送出第一個 prompt 後記下終端機與對話；關�
   // 同一個終端機再開一輪（例如重新執行 claude）又記回來
   await $.turn.start({ turnId: 't2', text: '再來' })
   expect(JSON.parse(files.get(RESUME_FILE) ?? '{}').sessionId).toBe('sess-1')
+})
+
+// 送給 hooks/osc7501.ps1 的 payload，依送出順序
+const statusPayloads = (herdr: any): string[] =>
+  herdr.argv.filter((a: string[]) => a[0] === 'powershell.exe').map((a: string[]) => a[a.indexOf('-Payload') + 1])
+
+test('Windows 的 herdr App：替 Claude 回報 OSC 7501（啟動、工作、等權限、答完、中斷、提問、離開）', async ($, on) => {
+  const { herdr, clock } = setup(on, { hc: true, windows: true })
+  const settle = () => clock.advance(10)
+  await start($)
+  await settle()
+  expect(statusPayloads(herdr)).toEqual(['state=idle:app=claude'])
+  // 掛到終端機裡 shell（hc get 的 pid）的主控台寫
+  expect(herdr.argv.find((a: string[]) => a[0] === 'powershell.exe')!.join(' ')).toContain('/hooks/osc7501.ps1 -TargetPid 4242 -Payload')
+
+  await $.turn.start({ turnId: 't1', text: '推上去' })
+  await settle()
+  await $.classic.Notification({ message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' })
+  await settle()
+  // 使用者按了允許、工具跑完
+  await $.tool.call({ tool: 'Bash', command: 'git push' })
+  await settle()
+  await $.turn.complete({ turnId: 't1', answer: '推好了', durationMs: 1000, isAborted: false, usage: null })
+  await settle()
+  // 中斷的回合是 idle
+  await $.turn.start({ turnId: 't2', text: '再改一下' })
+  await settle()
+  await $.turn.complete({ turnId: 't2', answer: '', durationMs: 100, isAborted: true, usage: null })
+  await settle()
+  // 問使用者問題：等回答，答完回到工作中
+  await $.turn.start({ turnId: 't3', text: '你決定' })
+  await settle()
+  await $.tool.call({ tool: 'AskUserQuestion', questions: [] })
+  await settle()
+  expect(statusPayloads(herdr)).toEqual([
+    'state=idle:app=claude',
+    'state=working:app=claude',
+    'state=blocked:kind=permission:app=claude',
+    'state=working:app=claude',
+    'state=done:app=claude',
+    'state=working:app=claude',
+    'state=idle:app=claude',
+    'state=working:app=claude',
+    'state=blocked:kind=question:app=claude',
+    'state=working:app=claude',
+  ])
+  // 離開時清掉記錄
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: 'sess-1', resume: { id: 'sess-1' } })
+  expect(statusPayloads(herdr).at(-1)).toBe('state=clear')
+})
+
+test('不是 Windows 的 herdr App 就不替 Claude 回報狀態（macOS 的 App、Windows 的 herdr 終端機版）', async ($, on) => {
+  const mac = setup(on, { hc: true })
+  await start($)
+  await $.turn.start({ turnId: 't1', text: '開始' })
+  await mac.clock.advance(10)
+  expect(statusPayloads(mac.herdr)).toEqual([])
+})
+
+test('Windows 的 herdr 終端機版不替 Claude 回報狀態', async ($, on) => {
+  const win = setup(on, { herdr: true, windows: true })
+  await start($)
+  await $.turn.start({ turnId: 't1', text: '開始' })
+  await win.clock.advance(10)
+  expect(statusPayloads(win.herdr)).toEqual([])
 })
 
 test('不在 herdr App 裡不記接回用的紀錄', async ($, on) => {
