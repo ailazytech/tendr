@@ -44,6 +44,12 @@ function standing(l) {
   return "已驗收";
 }
 
+// 目前在哪個 space 的哪個分頁：變了就該換專案
+function whereNow() {
+  const f = focused();
+  return (f?.space ?? "") + "/" + (f?.tab ?? "");
+}
+
 // App 只知道終端機的資料夾：依序給 focused、同一個分頁、同一個 space 的，board-data 挑第一個有 tendr 設定的
 function candidates() {
   const f = focused();
@@ -62,8 +68,11 @@ export default class TendrBoard extends View {
   init(_props, cx) {
     this.data = null;
     this.error = "";
-    // 正在看的 lane；重載（存檔、換 layout 回來）後停在原本那條
-    this.route = localStorage.getItem("route") || null;
+    // 正在看的 lane：依專案各記一條，資料載入、知道是哪個專案後才還原（見 load）
+    this.root = null;
+    this.route = null;
+    this.loadSeq = 0;
+    this.where = whereNow();
     this.quietOpen = false;
     this.memOpen = false;
     this.screen = null; // { lane, lines, at, error }
@@ -75,6 +84,13 @@ export default class TendrBoard extends View {
     // lane 在別的 session 寫狀態檔：資料夾有變就重讀，另外 10 秒保底（timer 在面板收起時也會跑，別太勤）
     cx.timer.every(10_000, (cx) => this.load(cx));
     cx.timer.every(3_000, (cx) => { if (this.route) this.readScreen(cx); });
+    // 換了 space 或分頁就馬上換專案：focused() 變動只會重畫，不會自己重讀資料
+    cx.timer.every(1_000, (cx) => {
+      const where = whereNow();
+      if (where === this.where) return;
+      this.where = where;
+      this.load(cx);
+    });
     // keys.json 或 herdr-app do tendr-board.<指令>：urgent 跳到最需要處理的 lane，next／prev 照列表順序換，back 回列表
     cx.spawn(async (cx) => {
       for (;;) {
@@ -98,11 +114,20 @@ export default class TendrBoard extends View {
   }
 
   load(cx) {
+    // 連續切換時舊的那次可能比較晚回來：只收最後一次
+    const seq = ++this.loadSeq;
     cx.spawn(async (cx) => {
       try {
         const r = await exec(NODE, [DATA_SCRIPT, ...candidates()]);
+        if (seq !== this.loadSeq) return;
         if (r.code !== 0) throw new Error(r.stderr || "exit " + r.code);
-        this.data = JSON.parse(r.stdout);
+        const data = JSON.parse(r.stdout);
+        if (data.root !== this.root) {
+          this.root = data.root;
+          this.route = localStorage.getItem("route:" + data.root) || null;
+          this.screen = null;
+        }
+        this.data = data;
         this.error = "";
         this.watch(cx);
       } catch (e) {
@@ -154,8 +179,8 @@ export default class TendrBoard extends View {
   go(lane) {
     this.route = lane;
     this.screen = null;
-    if (lane) localStorage.setItem("route", lane);
-    else localStorage.removeItem("route");
+    if (lane) localStorage.setItem("route:" + this.root, lane);
+    else localStorage.removeItem("route:" + this.root);
   }
 
   open(lane, cx) {
