@@ -1,4 +1,4 @@
-// baton：側邊工作看板（原名 session-board）
+// tendr：側邊工作看板（原名 baton，更早叫 session-board）
 // 分頁「任務」（專案設了 tasks_dir 時）：每條 lane 一到兩行＋百分比，點開是 lane 的子頁（步驟、即時畫面、回覆、報告、記憶），可返回原位
 // 分頁「進度／交接」：執行狀態、任務清單、上下文用量、交接文件
 // 分頁「記憶」：本專案的記憶檔，依 layer 分層（使用者／專案／工作線／階段）
@@ -11,7 +11,7 @@ import { briefOf, doneCheck, freshReply, freshWork, noteCall, noteStep, replyLan
 import { ACTIONS_END, ACTIONS_START, ASSISTANT_MAX, PROMOTE_COUNT, USER_MAX, indexLine, newMemoryFile, parseActions, promoteCandidates, setMeta, squash } from './notes.js'
 import { GUARDS_END, GUARDS_START, GUARD_ASK_ITEMS, GUARD_MIN_COUNT, PATTERN_MAX, applyGuardChange, findGuardHit, guardCandidates, parseGuards, withProposals } from './guards.js'
 
-const PANE = 'baton'
+const PANE = 'tendr'
 
 const MINUTE = 60 * 1000
 const HOUR = 60 * MINUTE
@@ -29,11 +29,16 @@ const HERDR_GRACE_MS = 60 * 1000
 const DEFAULT_MEMORY_DIR = '{config}/projects/{project}/memory'
 const DEFAULT_HANDOFF_PATH = 'docs/HANDOFF.md'
 // 每個專案的覆寫檔（不放進專案 repo）：{ handoff_path, handoff_section, compact_path, memory_dir, tasks_dir, tasks_self }
-const PROJECT_SETTINGS = '{config}/projects/{project}/baton.json'
-// 改名前（session-board）的覆寫檔：沒有 baton.json 時退回讀這個，舊專案不用搬
-const LEGACY_PROJECT_SETTINGS = '{config}/projects/{project}/session-board.json'
+const PROJECT_SETTINGS = '{config}/projects/{project}/tendr.json'
+// 改名前的覆寫檔（baton，更早是 session-board）：沒有 tendr.json 時依序退回讀這些，舊專案不用搬
+const LEGACY_PROJECT_SETTINGS = ['{config}/projects/{project}/baton.json', '{config}/projects/{project}/session-board.json']
 // 守門（不放進專案 repo）：[{ id, rule, tool, match, unless?, mode, message, state, bad, good, at }]
-const GUARDS_FILE = '{config}/projects/{project}/baton-guards.json'
+const GUARDS_FILE = '{config}/projects/{project}/tendr-guards.json'
+// 改名前的守門檔：沒有新檔時搬過來（Claude 依指示改的是新檔，不能只讀舊檔）
+const LEGACY_GUARDS_FILE = '{config}/projects/{project}/baton-guards.json'
+// 改名前的外掛暫存（見 importLegacyStore）
+const LEGACY_STORE_DIR = '{config}/plugins/store'
+const LEGACY_STORE_MARK = 'imported:baton'
 // 整理筆記的對話紀錄最多留幾則（整理失敗一直重試時不會無限長大）
 const TALK_MAX = 400
 
@@ -126,6 +131,7 @@ const I18N = {
     reportFail: (err) => '讀不到報告：' + err,
     // 檔案
     settingsReadFail: (err) => '讀取專案設定失敗：' + err,
+    legacyStoreFail: (err) => '匯入 baton 的暫存失敗：' + err,
     compactWriteFail: (err) => '寫入壓縮摘要失敗：' + err,
     memoryReadFail: (err) => '讀取記憶失敗：' + err,
     // herdr
@@ -211,7 +217,7 @@ const I18N = {
     count: (label, n) => label + '（' + n + '）',
     // 給 Claude 的說明（使用者看不到）
     laneBriefing: (c) => [
-      '[baton] 這個專案用 lane 狀態檔交接：',
+      '[tendr] 這個專案用 lane 狀態檔交接：',
       '- 任務狀態：' + c.tasksDir + '/<lane>.json，一條 lane 一個；你自己的是 ' + c.selfLane + '.json。格式與更新規則見該資料夾的 README。',
       '- 詳細交接：' + c.handoffFile + (c.handoffSection ? ' 的「' + c.handoffSection + '」一節' : '') + '，需要細節時再讀。',
       '- 記憶：' + c.memoryDir + '（frontmatter 的 metadata.layer 分成 user／project／workstream／phase）',
@@ -223,7 +229,7 @@ const I18N = {
     laneSelfSteps: (lane) => '你自己的步驟（' + lane + '）：',
     laneSelfNeeds: (needs) => '等使用者決定：' + needs,
     briefing: (c) => [
-      '[baton] 這個專案使用 baton 交接機制：',
+      '[tendr] 這個專案使用 tendr 交接機制：',
       '- 交接文件：' +
         c.handoffFile +
         (c.handoffSection ? ' 的「' + c.handoffSection + '」一節（專案自己的文件，只更新這一節）' : '') +
@@ -257,10 +263,10 @@ const I18N = {
     compactDoc: (file, section) => '保留 ' + file + (section ? ' 的「' + section + '」一節' : '') + ' 的重點、目前任務狀態與下一步；壓縮後以交接文件為準繼續工作。',
     // 防呆提醒（給 Claude，使用者看不到）
     retryNudge: (tool, brief) =>
-      '[baton] 這個工具（' + tool + '）連續兩次因同樣原因失敗（' + (brief || '沒有錯誤文字') + '）。錯誤看起來是暫時性的（逾時、還在載入、連線中斷）就稍等再試一次；不是的話先找出原因並換一個做法，不要原樣重試。',
+      '[tendr] 這個工具（' + tool + '）連續兩次因同樣原因失敗（' + (brief || '沒有錯誤文字') + '）。錯誤看起來是暫時性的（逾時、還在載入、連線中斷）就稍等再試一次；不是的話先找出原因並換一個做法，不要原樣重試。',
     doneCheck: {
-      unverified: '[baton] 你說完成了，但這一輪改了檔案之後沒有跑任何測試或檢查。請跑和這次改動相關的測試或檢查，在回覆附上跑了什麼、結果如何；沒辦法驗證的，說明哪些沒驗證、為什麼，不要說完成。',
-      failed: '[baton] 你說完成了，但這一輪改檔後的測試或檢查沒有通過。請修好問題並重新跑過測試或檢查，在回覆附上結果；若無法修好或與這次改動無關，請在回覆誠實說明失敗原因，不要直接說完成。',
+      unverified: '[tendr] 你說完成了，但這一輪改了檔案之後沒有跑任何測試或檢查。請跑和這次改動相關的測試或檢查，在回覆附上跑了什麼、結果如何；沒辦法驗證的，說明哪些沒驗證、為什麼，不要說完成。',
+      failed: '[tendr] 你說完成了，但這一輪改檔後的測試或檢查沒有通過。請修好問題並重新跑過測試或檢查，在回覆附上結果；若無法修好或與這次改動無關，請在回覆誠實說明失敗原因，不要直接說完成。',
     },
     // 自動整理筆記
     cmdDistill: '立即整理筆記：把上次整理之後你的要求與糾正寫進記憶資料夾',
@@ -311,7 +317,7 @@ const I18N = {
       ].join('\n'),
     promote: (items, dir) =>
       [
-        '[baton] 下面這些要求使用者已經講了 ' + PROMOTE_COUNT + ' 次以上，寫在記憶裡還不夠。先做完使用者這次交代的事，再處理；使用者在處理緊急問題時先不要做。',
+        '[tendr] 下面這些要求使用者已經講了 ' + PROMOTE_COUNT + ' 次以上，寫在記憶裡還不夠。先做完使用者這次交代的事，再處理；使用者在處理緊急問題時先不要做。',
         '- layer 是 project 的：放進專案放規則的地方（CLAUDE.md、AGENTS.md 或現有的 hook），先檢查是否已經寫過、不要 commit，用一句話告訴使用者加了什麼、放在哪。',
         '- layer 是 user 的：先問使用者要不要加進全域的 ~/.claude/CLAUDE.md，使用者說好才加。',
         '- 放好後在那則記憶檔的 metadata 加上 `promoted: <放的檔案路徑>` 和 `promoted_count: <當時的 count>`；使用者說不要放就加 `promoted: declined`。',
@@ -327,7 +333,7 @@ const I18N = {
     guardDrafted: (n) => '起草了 ' + n + ' 條守門，下一段對話會請 Claude 問你要不要採用',
     guardDraftFail: (err) => '起草守門失敗：' + err,
     guardDenyToast: (id, tool, rule) => '守門 #' + id + ' 擋下 ' + tool + '（' + rule + '）',
-    guardHead: (g) => '[baton] 守門 #' + g.id + '（規則「' + g.rule + '」）：' + g.message,
+    guardHead: (g) => '[tendr] 守門 #' + g.id + '（規則「' + g.rule + '」）：' + g.message,
     guardDenyHint: (id) => '使用者核准過這條守門；確定要做就請使用者自己執行，或請使用者用 /guard off ' + id + ' 停用。',
     guardSummary: (on, proposed, off) => '守門：啟用 ' + on + '、待問 ' + proposed + '、停用 ' + off + '（/guard 查看）',
     guardNone: (n) => '還沒有守門。同一個要求放進專案後又被糾正，或你不讓它放進專案、卻講了 ' + n + ' 次，整理筆記後會起草；也可以打 /guard suggest。',
@@ -343,7 +349,7 @@ const I18N = {
     },
     guardAsk: (drafts, file) =>
       [
-        '[baton] 下面這些要求已經寫成文字，AI 還是一再違反，baton 起草了守門：在 AI 呼叫工具之前比對參數，違規時提醒或擋下。先做完使用者這次交代的事，再在回覆最後用一兩句白話問使用者要不要採用：說明它在什麼情況會出現、會做什麼。使用者正在處理緊急問題就不要問；沒回應就不要追問。',
+        '[tendr] 下面這些要求已經寫成文字，AI 還是一再違反，tendr 起草了守門：在 AI 呼叫工具之前比對參數，違規時提醒或擋下。先做完使用者這次交代的事，再在回覆最後用一兩句白話問使用者要不要採用：說明它在什麼情況會出現、會做什麼。使用者正在處理緊急問題就不要問；沒回應就不要追問。',
         ...drafts.map(
           (g) =>
             '- 守門 #' + g.id + '（' + (g.mode === 'deny' ? '擋下' : '提醒') + '）：規則「' + g.rule + '」｜工具 ' + g.tool + ' 符合 /' + g.match + '/' + (g.unless ? '，除非 /' + g.unless + '/' : '') + ' 時，告訴 AI：' + g.message,
@@ -431,6 +437,7 @@ const I18N = {
     reportMissing: 'Report file not found',
     reportFail: (err) => 'Cannot read report: ' + err,
     settingsReadFail: (err) => 'Failed to read project settings: ' + err,
+    legacyStoreFail: (err) => "Failed to import baton's storage: " + err,
     compactWriteFail: (err) => 'Failed to write compaction summary: ' + err,
     memoryReadFail: (err) => 'Failed to read memory: ' + err,
     herdrReadFail: (err) => 'Failed to read herdr: ' + err,
@@ -507,7 +514,7 @@ const I18N = {
     wrap: 'Wrap',
     count: (label, n) => label + ' (' + n + ')',
     laneBriefing: (c) => [
-      '[baton] This project hands off through lane status files:',
+      '[tendr] This project hands off through lane status files:',
       '- Lane status: ' + c.tasksDir + '/<lane>.json, one per lane; yours is ' + c.selfLane + '.json. Format and update rules are in that folder\'s README.',
       '- Detailed handoff: ' + c.handoffFile + (c.handoffSection ? ', section "' + c.handoffSection + '"' : '') + '; read it when you need details.',
       '- Memory: ' + c.memoryDir + ' (frontmatter metadata.layer: user / project / workstream / phase)',
@@ -519,7 +526,7 @@ const I18N = {
     laneSelfSteps: (lane) => 'Your steps (' + lane + '):',
     laneSelfNeeds: (needs) => 'Waiting on the user: ' + needs,
     briefing: (c) => [
-      '[baton] This project uses the baton handoff mechanism:',
+      '[tendr] This project uses the tendr handoff mechanism:',
       '- Handoff document: ' +
         c.handoffFile +
         (c.handoffSection ? ', section "' + c.handoffSection + '" (a project document; update only that section)' : '') +
@@ -554,10 +561,10 @@ const I18N = {
     compactDoc: (file, section) => 'Keep the key points of ' + file + (section ? ', section "' + section + '"' : '') + ', the current task state and next steps; after compaction, continue from the handoff document.',
     // Nudges (for Claude; the user doesn't see them)
     retryNudge: (tool, brief) =>
-      '[baton] This tool (' + tool + ') failed twice in a row for the same reason (' + (brief || 'no error text') + "). If the error looks transient (timeout, still loading, dropped connection), wait a moment and try once more; otherwise find the cause and change approach instead of retrying as is.",
+      '[tendr] This tool (' + tool + ') failed twice in a row for the same reason (' + (brief || 'no error text') + "). If the error looks transient (timeout, still loading, dropped connection), wait a moment and try once more; otherwise find the cause and change approach instead of retrying as is.",
     doneCheck: {
-      unverified: "[baton] You said it's done, but no test or check ran after you edited files this turn. Run the tests or checks relevant to this change and include what you ran and the result in your reply; if something can't be verified, say what wasn't verified and why instead of saying it's done.",
-      failed: "[baton] You said it's done, but the tests or checks after your edits this turn did not pass. Fix the problem and run them again, including the result in your reply; if it can't be fixed or is unrelated to this change, explain the failure honestly instead of saying it's done.",
+      unverified: "[tendr] You said it's done, but no test or check ran after you edited files this turn. Run the tests or checks relevant to this change and include what you ran and the result in your reply; if something can't be verified, say what wasn't verified and why instead of saying it's done.",
+      failed: "[tendr] You said it's done, but the tests or checks after your edits this turn did not pass. Fix the problem and run them again, including the result in your reply; if it can't be fixed or is unrelated to this change, explain the failure honestly instead of saying it's done.",
     },
     // Notes
     cmdDistill: 'Update notes now: write your requests and corrections since the last pass into the memory folder',
@@ -608,7 +615,7 @@ const I18N = {
       ].join('\n'),
     promote: (items, dir) =>
       [
-        "[baton] The user has said each of these " + PROMOTE_COUNT + "+ times; keeping them in memory isn't enough. Finish what the user asked for this time first, then handle them; skip this while the user is dealing with something urgent.",
+        "[tendr] The user has said each of these " + PROMOTE_COUNT + "+ times; keeping them in memory isn't enough. Finish what the user asked for this time first, then handle them; skip this while the user is dealing with something urgent.",
         "- layer project: put it where the project keeps its rules (CLAUDE.md, AGENTS.md or an existing hook); check it isn't already there, don't commit, and tell the user in one sentence what you added and where.",
         '- layer user: ask the user first whether to add it to the global ~/.claude/CLAUDE.md, and add it only if they agree.',
         "- Once placed, add `promoted: <file path>` and `promoted_count: <count at that time>` to that memory file's metadata; if the user doesn't want it placed, add `promoted: declined`.",
@@ -624,7 +631,7 @@ const I18N = {
     guardDrafted: (n) => 'Drafted ' + n + ' guard(s); the next conversation will ask you whether to adopt them',
     guardDraftFail: (err) => 'Drafting guards failed: ' + err,
     guardDenyToast: (id, tool, rule) => 'Guard #' + id + ' blocked ' + tool + ' (' + rule + ')',
-    guardHead: (g) => '[baton] Guard #' + g.id + ' (rule "' + g.rule + '"): ' + g.message,
+    guardHead: (g) => '[tendr] Guard #' + g.id + ' (rule "' + g.rule + '"): ' + g.message,
     guardDenyHint: (id) => 'The user approved this guard; if it really needs doing, ask the user to run it themselves, or to disable the guard with /guard off ' + id + '.',
     guardSummary: (on, proposed, off) => 'Guards: ' + on + ' on, ' + proposed + ' to ask, ' + off + ' off (/guard to see)',
     guardNone: (n) => "No guards yet. They're drafted after a notes pass when a request placed in the project is corrected again, or one you kept out of the project has been said " + n + ' times; or run /guard suggest.',
@@ -640,7 +647,7 @@ const I18N = {
     },
     guardAsk: (drafts, file) =>
       [
-        '[baton] These requests are already written down, yet the AI keeps breaking them, so baton drafted guards: before the AI calls a tool, its arguments are matched and a violation gets a reminder or is blocked. Finish what the user asked for this time first, then at the end of your reply ask in a sentence or two whether to adopt them: say when each would fire and what it would do. Skip this while the user is dealing with something urgent; if they don\'t answer, don\'t ask again.',
+        '[tendr] These requests are already written down, yet the AI keeps breaking them, so tendr drafted guards: before the AI calls a tool, its arguments are matched and a violation gets a reminder or is blocked. Finish what the user asked for this time first, then at the end of your reply ask in a sentence or two whether to adopt them: say when each would fire and what it would do. Skip this while the user is dealing with something urgent; if they don\'t answer, don\'t ask again.',
         ...drafts.map(
           (g) =>
             '- Guard #' + g.id + ' (' + (g.mode === 'deny' ? 'block' : 'remind') + '): rule "' + g.rule + '" | when tool ' + g.tool + ' matches /' + g.match + '/' + (g.unless ? ', unless /' + g.unless + '/' : '') + ', tell the AI: ' + g.message,
@@ -762,7 +769,7 @@ let cacheTtl = '1h'
 // 最後一次由使用者送出 prompt 在這段時間內，才視為「還在進行中的工作」（/config 的 away_hours）
 let activeWindowMs = 24 * HOUR
 let auto = true
-// 這個 session 輸入過 /board 才為 true；存在 store，mod 重新載入後仍保留
+// 這個 session 輸入過 /tendr 才為 true；存在 store，mod 重新載入後仍保留
 let activated = false
 let armed = true
 let phase = 'idle' // idle | handoff | compacting
@@ -895,11 +902,18 @@ async function expandPath($, raw) {
 async function loadProjectSettings($) {
   projectSettings = {}
   const primary = await expandPath($, PROJECT_SETTINGS)
-  const legacy = await expandPath($, LEGACY_PROJECT_SETTINGS)
-  projectSettingsWatch = [primary, legacy]
+  const legacy = []
+  for (const p of LEGACY_PROJECT_SETTINGS) legacy.push(await expandPath($, p))
+  projectSettingsWatch = [primary, ...legacy]
   projectSettingsFile = primary
   try {
-    if (!(await $.fs.exists(primary)) && (await $.fs.exists(legacy))) projectSettingsFile = legacy
+    if (!(await $.fs.exists(primary))) {
+      for (const p of legacy) {
+        if (!(await $.fs.exists(p))) continue
+        projectSettingsFile = p
+        break
+      }
+    }
     if (!(await $.fs.exists(projectSettingsFile))) return
     const parsed = JSON.parse(await $.fs.read(projectSettingsFile))
     if (parsed && typeof parsed === 'object') projectSettings = parsed
@@ -1119,8 +1133,8 @@ async function loadCompact($) {
     const st = await $.fs.stat(compactFile)
     const text = await $.fs.read(compactFile)
     // 檔案第一行是標頭，其餘是摘要
-    // 改名前寫的標頭是 session-board
-    const m = text.match(/^<!--\s*(?:baton|session-board):\s*(\{.*\})\s*-->\n?([\s\S]*)$/)
+    // 改名前寫的標頭是 baton 或 session-board
+    const m = text.match(/^<!--\s*(?:tendr|baton|session-board):\s*(\{.*\})\s*-->\n?([\s\S]*)$/)
     const meta = m ? JSON.parse(m[1]) : {}
     compactInfo = {
       summary: (m ? m[2] : text).trim(),
@@ -1137,7 +1151,7 @@ async function saveCompact($) {
   try {
     if (!compactFile) await resolvePaths($)
     const meta = { at: compactInfo.at, tokensBefore: compactInfo.tokensBefore, tokensAfter: compactInfo.tokensAfter }
-    await $.fs.write(compactFile, '<!-- baton: ' + JSON.stringify(meta) + ' -->\n' + compactInfo.summary + '\n')
+    await $.fs.write(compactFile, '<!-- tendr: ' + JSON.stringify(meta) + ' -->\n' + compactInfo.summary + '\n')
   } catch (err) {
     note = T.compactWriteFail(String(err))
   }
@@ -1381,7 +1395,7 @@ async function runCompact($) {
 }
 
 async function checkTrigger($) {
-  // 只有輸入過 /board 的 session（主控 session）才自動交接
+  // 只有輸入過 /tendr 的 session（主控 session）才自動交接
   if (!activated || !auto || !armed || phase !== 'idle' || !lastRequestAt) return
   // 5 分鐘的快取每次停下來想一下就會過期，自動交接只會一直打斷，不做
   if (cacheTtl !== '1h') return
@@ -1517,11 +1531,39 @@ async function distill($, why) {
   }
 }
 
+// ---------- 改名前的暫存 ----------
+
+// 引擎依外掛名稱分開存暫存（{config}/plugins/store/<外掛>_<marketplace>-<hash>.json，一層 key → value），
+// 從 baton 換名後讀不到舊的：第一次啟動時匯入，已有的 key 不覆蓋。讀檔格式是引擎的內部細節，失敗就算了
+async function importLegacyStore($) {
+  try {
+    if (await $.store.get(LEGACY_STORE_MARK)) return
+    const dir = await expandPath($, LEGACY_STORE_DIR)
+    if (await $.fs.exists(dir)) {
+      for (const f of await $.fs.list(dir)) {
+        if (f.kind !== 'file' || !f.name.startsWith('baton_') || !f.name.endsWith('.json')) continue
+        const data = JSON.parse(await $.fs.read(dir + '/' + f.name))
+        if (!data || typeof data !== 'object' || Array.isArray(data)) continue
+        for (const [key, value] of Object.entries(data)) {
+          if ((await $.store.get(key)) === undefined) await $.store.set(key, value)
+        }
+      }
+    }
+    await $.store.set(LEGACY_STORE_MARK, true)
+  } catch (err) {
+    note = T.legacyStoreFail(String(err))
+  }
+}
+
 // ---------- 守門 ----------
 
 async function loadGuards($) {
   try {
     if (!guardsFile) await resolvePaths($)
+    if (!(await $.fs.exists(guardsFile))) {
+      const legacy = await expandPath($, LEGACY_GUARDS_FILE)
+      if (await $.fs.exists(legacy)) await $.fs.write(guardsFile, await $.fs.read(legacy))
+    }
     if (!(await $.fs.exists(guardsFile))) {
       guards = []
     } else {
@@ -1608,7 +1650,7 @@ function watchCall(e, r) {
   }
 }
 
-// 沒開就打開，開著就關掉（/board 與輸入框上方的按鈕共用）
+// 沒開就打開，開著就關掉（/tendr 與輸入框上方的按鈕共用）
 async function toggleBoard($) {
   if (paneOpen) {
     paneOpen = false
@@ -1667,6 +1709,7 @@ export function register(on, options) {
     } else {
       replyTarget = replyLanguage === 'off' ? undefined : replyLanguage
     }
+    await importLegacyStore($)
     const savedAuto = await $.store.get('auto')
     if (typeof savedAuto === 'boolean') auto = savedAuto
     const savedWrap = await $.store.get('wrap')
@@ -1712,11 +1755,11 @@ export function register(on, options) {
       if (paneOpen) $.ui.invalidate('ui.render')
     })
 
-    // 不自動開啟，只有輸入 /board 才會出現
+    // 不自動開啟，只有輸入 /tendr 才會出現
     try {
-      await $.command.register({ name: 'board', description: T.cmdBoard, immediate: true })
+      await $.command.register({ name: 'tendr', description: T.cmdBoard, immediate: true })
     } catch (err) {
-      note = T.registerFail('board', String(err))
+      note = T.registerFail('tendr', String(err))
     }
     // 非全螢幕時滑鼠點不到看板按鈕，用指令觸發立即交接
     try {
@@ -1737,7 +1780,7 @@ export function register(on, options) {
     return next(e)
   })
 
-  on('command.run', { command: 'board' }, async ($) => {
+  on('command.run', { command: 'tendr' }, async ($) => {
     await toggleBoard($)
     return {}
   })
@@ -1818,7 +1861,7 @@ export function register(on, options) {
       toolCalls = 0
       currentTool = ''
       // 只認自己送出的交接指示；使用者剛好先送出的那一輪不算
-      // 引擎會在外掛送的訊息前加「The baton plugin sent a message: 」，所以不能用 startsWith
+      // 引擎會在外掛送的訊息前加「The tendr plugin sent a message: 」，所以不能用 startsWith
       if (phase === 'handoff' && !handoffTurnId && HANDOFF_PREFIXES.some((p) => String(e.text ?? '').includes(p))) handoffTurnId = e.turnId
       $.ui.invalidate('ui.render')
     }

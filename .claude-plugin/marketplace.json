@@ -1,10 +1,10 @@
 {
-  "name": "baton",
+  "name": "tendr",
   "owner": { "name": "ailazytech" },
-  "description": "baton: a work board plugin for Claude Code",
+  "description": "tendr: a work board plugin for Claude Code",
   "plugins": [
     {
-      "name": "baton",
+      "name": "tendr",
       "source": "./",
       "description": "Side-panel work board for Claude Code: auto handoff + compaction before the prompt cache expires, lanes, layered memory"
     }

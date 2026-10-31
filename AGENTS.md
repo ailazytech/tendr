@@ -6,7 +6,7 @@
 
 ## 這是什麼
 
-baton 是 Claude Code 的 hooks 外掛（plugin 的 `hooks/hooks.json` 指向一個 JS 模組），在側邊畫一個工作看板，並在提示快取過期前自動「寫交接 → 壓縮對話」。沒有 build 步驟、沒有 npm 相依套件。
+tendr（原名 baton）是 Claude Code 的 hooks 外掛（plugin 的 `hooks/hooks.json` 指向一個 JS 模組），在側邊畫一個工作看板，並在提示快取過期前自動「寫交接 → 壓縮對話」。沒有 build 步驟、沒有 npm 相依套件。
 
 ## 檔案
 
@@ -32,7 +32,7 @@ baton 是 Claude Code 的 hooks 外掛（plugin 的 `hooks/hooks.json` 指向一
 2. **模組層級的狀態**：`let` 變數（介面、執行狀態、herdr、lane、記憶、交接、`phase`）。整個外掛是一個 session 一份狀態
 3. **工具函式**：路徑展開（`expandPath`、`resolvePaths`）、記憶解析（`parseMemory`）、lane（`loadLanes`、`laneStanding`…）、herdr（`parseHerdr`、`refreshHerdr`）、交接（`briefing`、`handoffPrompt`、`startHandoff`、`runCompact`、`checkTrigger`）
 4. **`register(on, options)`**：註冊 hook
-   - `session.start`：讀設定與資料、每秒 tick（`$.clock.every`）、註冊 `/board`、`/handoff`、`/distill`、`/guard`
+   - `session.start`：讀設定與資料、每秒 tick（`$.clock.every`）、註冊 `/tendr`、`/handoff`、`/distill`、`/guard`
    - `prompt.submit`：使用者第一個 prompt 附上 `briefing()`、講 3 次的要求（`T.promote`）、待問的守門（`T.guardAsk`）；每則使用者訊息記進整理筆記用的對話紀錄（`recordTalk`），並帶出上一輪的回覆語言提醒
    - `turn.start`／`turn.step`／`turn.complete`：執行狀態、快取計時（`lastRequestAt`）、交接那一輪結束後觸發壓縮；`turn.step` 判斷回覆語言，`turn.complete` 記下回答、每 `distill_every` 則訊息觸發整理
    - `classic.Stop`：說完成了卻沒驗證時回 `block`（`doneCheck`）
@@ -45,7 +45,7 @@ baton 是 Claude Code 的 hooks 外掛（plugin 的 `hooks/hooks.json` 指向一
 
 `phase`：`idle` → `handoff`（已送出交接指示，開頭是目前語言的 `handoffPrefix`）→ `compacting` → `idle`。
 
-- `checkTrigger` 每秒跑一次，條件全部成立才 `startHandoff`：`activated`（輸入過 `/board`）、`auto`、`armed`（使用者有新動作後才重新允許）、`cacheTtl === '1h'`、剩餘時間在 0～5 分鐘、使用者沒離開超過 `away_hours`、上下文 ≥ 20%
+- `checkTrigger` 每秒跑一次，條件全部成立才 `startHandoff`：`activated`（輸入過 `/tendr`）、`auto`、`armed`（使用者有新動作後才重新允許）、`cacheTtl === '1h'`、剩餘時間在 0～5 分鐘、使用者沒離開超過 `away_hours`、上下文 ≥ 20%
 - 只認 `turn.start` 文字裡含 `HANDOFF_PREFIX` 的那一輪是交接輪（引擎會在外掛訊息前加前綴，所以用 `includes` 不用 `startsWith`）
 - 那一輪被中斷就不壓縮；`session.compact` 被拒絕（還有一輪在跑）會重試最多 6 次
 - 有 `tasks_dir` 時，交接指示與 briefing 改成 lane 狀態檔版本（`laneBriefing`、`handoffPrompt` 的 `tasksDir` 分支）
@@ -55,8 +55,8 @@ baton 是 Claude Code 的 hooks 外掛（plugin 的 `hooks/hooks.json` 指向一
 
 - 對話紀錄（`talk`）依專案存在 `$.store` 的 `talk:<專案代號>`（不是依 session：換 session 後沒整理到的要接著整理）：只有使用者親手打的訊息（`prompt.submit` 的 `composer`／`bridge`，斜線指令除外）與主對話的回答。整理成功才丟掉送出去的那段；失敗留著下次再送
 - 整理模型的輸出每條都要附 `quote`，`parseActions` 會拿去比對使用者打過的訊息，對不上就丟掉。這是防止模型把 Claude 的話或自己的推論記成使用者的要求，不要拿掉
-- 記憶檔只改 frontmatter 的 `metadata`（`setMeta`），內文不動；新增的記憶 `metadata.source: baton`
-- 守門存在 `{config}/projects/{project}/baton-guards.json`。使用者同意由 Claude 直接改檔（`tool.call` 看到這個檔被寫就重讀），不需要另外的指令
+- 記憶檔只改 frontmatter 的 `metadata`（`setMeta`），內文不動；新增的記憶 `metadata.source: tendr`
+- 守門存在 `{config}/projects/{project}/tendr-guards.json`（改名前的 `baton-guards.json` 第一次載入時複製過來）。使用者同意由 Claude 直接改檔（`tool.call` 看到這個檔被寫就重讀），不需要另外的指令
 - `tool.call` 是會擋住工具的 hook：裡面新加的東西一律 `try`／`catch`，出錯就放行
 
 ## 慣例

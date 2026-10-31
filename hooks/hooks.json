@@ -1,4 +1,4 @@
 {
-  "description": "baton hooks module",
+  "description": "tendr hooks module",
   "modules": ["./register.js"]
 }

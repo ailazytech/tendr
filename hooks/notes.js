@@ -125,7 +125,7 @@ export function newMemoryFile(a, today) {
     '  layer: ' + a.layer,
     '  count: 1',
     '  last_seen: ' + today,
-    '  source: baton',
+    '  source: tendr',
     '---',
     '',
     a.body.trim(),

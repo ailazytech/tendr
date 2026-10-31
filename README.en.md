@@ -1,4 +1,4 @@
-# baton
+# tendr
 
 English ｜ [繁體中文](README.md)
 
@@ -17,7 +17,7 @@ Long-running work in Claude Code (an afternoon-long refactor, several agents run
 - **A new session starts from zero**: you paste the handoff back yourself, or spend several turns re-explaining context.
 - **Parallel lanes, no idea who's waiting on you**: one agent is stuck on a permission dialog, another finished and needs review, a third failed — and you're switching pane by pane to find out.
 
-What baton does:
+What tendr does:
 
 - **Hands off proactively with 5 minutes of cache left**: Claude writes the goal, progress, next step and open decisions into a handoff document, then the conversation is compacted. The handoff turn runs while the cache is still warm, so it's cheap; work continues from a clean context.
 - **Restores context automatically**: the first prompt of a new session (or after compaction) gets the handoff attached — no pasting.
@@ -30,19 +30,35 @@ What baton does:
 
 ```bash
 claude update                                          # make sure you're on 2.1.287+
-claude plugin marketplace add ailazytech/baton   # or a local path
-claude plugin install baton@baton
+claude plugin marketplace add ailazytech/tendr   # or a local path
+claude plugin install tendr@tendr
 ```
 
-Open a new session and type `/board`.
+Open a new session and type `/tendr`.
 
-- `/board`: toggle the board. **Only sessions that have run `/board` get automatic handoff** (they become the lead session).
+- `/tendr`: toggle the board. **Only sessions that have run `/tendr` get automatic handoff** (they become the lead session).
 - `/handoff`: hand off now without opening the board. Use this when the mouse can't reach the board buttons (non-fullscreen layout).
 - `/distill`: update notes now (see "Auto notes").
 - `/guard`: view and manage guards (see "Guards").
 - While the board is closed, a "◧ Work board" button appears at the top right of the prompt box (disable with `launcher_button` in `/config`).
 
 Docking on the right requires the fullscreen layout (`CLAUDE_CODE_NO_FLICKER=1`) and a terminal at least 110 columns wide; otherwise the board sits above the prompt box.
+
+### Upgrading from baton
+
+tendr was called baton. Reinstall under the new name:
+
+```bash
+claude plugin uninstall baton@baton
+claude plugin marketplace remove baton
+claude plugin marketplace add ailazytech/tendr
+claude plugin install tendr@tendr
+```
+
+- The `/board` command is now `/tendr` (`/board` is gone)
+- Project overrides: without `tendr.json`, `baton.json` and then `session-board.json` are read; no need to move them
+- Guards: `baton-guards.json` is copied to `tendr-guards.json` on first load
+- Plugin storage (conversation not yet turned into notes, guard hit counts, ...): imported from baton's storage on first start; existing keys are kept
 
 ## Features
 
@@ -61,7 +77,7 @@ Docking on the right requires the fullscreen layout (`CLAUDE_CODE_NO_FLICKER=1`)
 
 1. Every request from the lead session restarts the cache timer.
 2. With 5 minutes left, and when all of the following hold, the plugin sends an instruction starting with `[auto-handoff]` (`[自動交接]` in the Chinese UI) asking Claude to update the handoff document (or its own lane status file) and memory:
-   - this session has run `/board` and auto-handoff is on
+   - this session has run `/tendr` and auto-handoff is on
    - `cache_ttl` is `1h` (no auto-handoff with a 5-minute cache — it would interrupt constantly)
    - context usage is at least 20% (otherwise compaction isn't worth it)
    - the last user input is within `away_hours`, or Claude is still working
@@ -92,7 +108,7 @@ Your own requests, preferences and corrections are distilled into the memory fol
 For requests that keep being broken even when written down: a check before tool calls. Ported from ctx-handoff-mod.
 
 - **When drafted**: after a notes pass, when a request already placed in the project gets a higher count again (you corrected it again), or one you kept out of the project (`promoted: declined`) reaches 3. Or run `/guard suggest`
-- **Drafts**: the model writes a tool name and regular expressions (`match` / `unless`) plus one violating and one correct example; the program checks both before accepting. Stored in `{config}/projects/{project}/baton-guards.json` (outside the repo)
+- **Drafts**: the model writes a tool name and regular expressions (`match` / `unless`) plus one violating and one correct example; the program checks both before accepting. Stored in `{config}/projects/{project}/tendr-guards.json` (outside the repo)
 - **Nothing takes effect until you agree**: at the start of a new session Claude asks you after finishing your request; if you say yes, Claude sets that entry's `state` to `on` in the file (`off` if not). Or run `/guard on N`
 - **Once on**: `deny` blocks before running and shows a toast; `remind` runs as usual and appends a reminder for Claude. If the check itself errors, the call goes through
 - `/guard` lists all guards with hit counts; `/guard off N`, `/guard drop N`, `/guard mode N deny|remind`
@@ -121,7 +137,7 @@ Paths may use `{config}` (`~/.claude` or `CLAUDE_CONFIG_DIR`), `{project}` (proj
 
 ### Per-project overrides
 
-Put overrides in `{config}/projects/{project}/baton.json` (outside the project repo). Changes are picked up on save. If there's no `baton.json`, the pre-rename `session-board.json` is read instead:
+Put overrides in `{config}/projects/{project}/tendr.json` (outside the project repo). Changes are picked up on save. If there's no `tendr.json`, the pre-rename `baton.json` and then `session-board.json` are read instead:
 
 ```json
 {
@@ -206,8 +222,8 @@ Run `claude plugin test` when done and report only after everything passes. If b
 **Set up the Tasks tab in your own project**
 
 ```text
-I want to use baton's Tasks tab for the parallel work in this project.
-Set tasks_dir in ~/.claude/projects/<project slug>/baton.json to <folder>,
+I want to use tendr's Tasks tab for the parallel work in this project.
+Set tasks_dir in ~/.claude/projects/<project slug>/tendr.json to <folder>,
 write a README in that folder describing the lane status file format and update rules,
 then create a <lane>.json for each piece of ongoing work. The lead's own file is architect.json.
 ```
@@ -233,9 +249,9 @@ Paths are normalized to `/` internally; both platforms run the same code.
 | `{project}` slug | `/Users/<name>/Projects/app` → `-Users-<name>-Projects-app` | `D:\work\app` → `D--work-app` |
 | Case sensitivity | APFS is case-insensitive by default (the plugin compares paths case-insensitively) | NTFS is case-insensitive |
 
-- **Use relative paths in project settings**: `handoff_path`, `tasks_dir`, `compact_path` in `baton.json`, and `report`, `spec` in lane files, relative to the project root, work on both
+- **Use relative paths in project settings**: `handoff_path`, `tasks_dir`, `compact_path` in `tendr.json`, and `report`, `spec` in lane files, relative to the project root, work on both
 - **If you need absolute paths**: `~/...` on macOS; `/`-separated on Windows (`D:/notes`). Backslashes in JSON must be escaped (`D:\\notes`), so `/` is less error-prone
-- **Moving to another machine**: the `{project}` slug follows the project path. Copy `baton.json` and `memory/` from `{config}/projects/<old slug>/` to the new slug's folder, or the Memory tab will be empty and overrides won't apply
+- **Moving to another machine**: the `{project}` slug follows the project path. Copy `tendr.json` and `memory/` from `{config}/projects/<old slug>/` to the new slug's folder, or the Memory tab will be empty and overrides won't apply
 - **Different config folder**: `CLAUDE_CONFIG_DIR` changes `{config}` on both platforms
 - **Line endings**: CRLF is handled; no conversion needed
 
@@ -249,7 +265,7 @@ Paths are normalized to `/` internally; both platforms run the same code.
 - macOS Terminal.app: turn on View → "Allow Mouse Reporting" (⌘R)
 - macOS iTerm2: turn on Settings → Profiles → Terminal → "Enable mouse reporting"
 - Windows Terminal: works by default
-- If clicks don't land, use `/board` and `/handoff`
+- If clicks don't land, use `/tendr` and `/handoff`
 
 ### herdr
 

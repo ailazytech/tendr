@@ -1,10 +1,10 @@
 {
-  "name": "baton",
-  "version": "0.7.0",
+  "name": "tendr",
+  "version": "0.8.0",
   "description": "Work board for Claude Code: auto handoff + compaction before the prompt cache expires, lane overview, layered memory, auto notes, nudges and guards / 工作看板：快取將過期時自動交接並壓縮、lane 一覽、分層記憶、自動整理筆記、防呆提醒與守門",
   "author": { "name": "ailazytech" },
   "license": "MIT",
-  "repository": "https://github.com/ailazytech/baton",
+  "repository": "https://github.com/ailazytech/tendr",
   "userConfig": {
     "language": {
       "type": "string",
@@ -22,7 +22,7 @@
     "handoff_path": {
       "type": "string",
       "title": "Handoff document / 交接文件",
-      "description": "File auto-handoff writes and the Progress tab shows. Same placeholders as above; override per project in {config}/projects/{project}/baton.json / 自動交接寫入、進度分頁顯示的檔案。可用同上的代號；個別專案可用 {config}/projects/{project}/baton.json 覆寫",
+      "description": "File auto-handoff writes and the Progress tab shows. Same placeholders as above; override per project in {config}/projects/{project}/tendr.json / 自動交接寫入、進度分頁顯示的檔案。可用同上的代號；個別專案可用 {config}/projects/{project}/tendr.json 覆寫",
       "default": "docs/HANDOFF.md"
     },
     "brief_on_start": {

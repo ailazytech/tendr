@@ -25,9 +25,9 @@ const MEMORY_FILES: Record<string, string> = {
 }
 
 const PANE = {
-  plugin: 'baton',
+  plugin: 'tendr',
   component: 'Pane',
-  requestId: 'baton',
+  requestId: 'tendr',
   viewport: { columns: 160, rows: 40 },
   props: {
     title: '工作看板',
@@ -47,7 +47,7 @@ const HERDR_AGENTS = [
   { agent: 'grok', agent_status: 'idle', pane_id: 'wP:p1', workspace_id: 'wP' },
 ]
 
-const PROJECT_SETTINGS = MAC.home + '/.claude/projects/' + MAC.project + '/baton.json'
+const PROJECT_SETTINGS = MAC.home + '/.claude/projects/' + MAC.project + '/tendr.json'
 
 // lane 狀態檔放在專案的 docs/lanes/status
 const LANES_DIR = ROOT + '/docs/lanes/status'
@@ -59,8 +59,8 @@ function setup(
     handoff?: string
     herdr?: boolean
     projectSettings?: object
-    // 專案覆寫檔放在改名前的 session-board.json
-    legacySettings?: boolean
+    // 專案覆寫檔放在改名前的檔名：'baton' 是 baton.json，true 是更早的 session-board.json
+    legacySettings?: boolean | 'baton'
     progress?: string
     lanes?: Record<string, object>
     memoryFiles?: Record<string, string>
@@ -76,7 +76,8 @@ function setup(
   const os = extra.windows ? WIN : MAC
   // 外掛看到的路徑：一律 / 分隔
   const base = slash(os.root)
-  const settingsFile = slash(os.home) + '/.claude/projects/' + os.project + (extra.legacySettings ? '/session-board.json' : '/baton.json')
+  const settingsName = extra.legacySettings === 'baton' ? '/baton.json' : extra.legacySettings ? '/session-board.json' : '/tendr.json'
+  const settingsFile = slash(os.home) + '/.claude/projects/' + os.project + settingsName
   const lanesDir = base + '/docs/lanes/status'
   mock.env(on, {
     ...(extra.windows ? { USERPROFILE: WIN.home } : { HOME: MAC.home }),
@@ -141,14 +142,22 @@ function setup(
   on('session.usage', () => ({
     value: { context: { tokens: 90000, window: 200000, percent: extra.contextPercent ?? 45 }, rateLimits: [] },
   }))
+  // 外掛暫存資料夾（{config}/plugins/store）：裡面有檔案才算存在
+  const storeDir = slash(os.home) + '/.claude/plugins/store'
+  const under = (dir: string) => [...files.keys()].filter((p) => p.startsWith(dir + '/')).map((p) => p.slice(dir.length + 1))
   on('fs.exists', ($: any, e: any) => ({
-    value: norm(e.path).endsWith('/memory') || files.has(norm(e.path)) || (norm(e.path) === lanesDir && !!extra.lanes),
+    value:
+      norm(e.path).endsWith('/memory') ||
+      files.has(norm(e.path)) ||
+      (norm(e.path) === lanesDir && !!extra.lanes) ||
+      (norm(e.path) === storeDir && under(storeDir).length > 0),
   }))
   on('fs.write', ($: any, e: any) => {
     files.set(norm(e.path), e.text)
     return { value: undefined }
   })
   on('fs.list', ($: any, e: any) => {
+    if (norm(e.path) === storeDir) return { value: under(storeDir).map((name) => ({ name, kind: 'file', size: 10, isLink: false })) }
     if (norm(e.path) === lanesDir) {
       const names = [...files.keys()].filter((p) => p.startsWith(lanesDir + '/')).map((p) => p.slice(lanesDir.length + 1))
       return { value: [...names, 'README.md'].map((name) => ({ name, kind: 'file', size: 10, isLink: false })) }
@@ -219,15 +228,15 @@ async function step($: any, turnId: string) {
   while (s.done !== true) s = await stream.next()
 }
 
-test('啟動時不自動開，/board 開、再一次 /board 關', async ($, on) => {
+test('啟動時不自動開，/tendr 開、再一次 /tendr 關', async ($, on) => {
   const { calls } = setup(on)
   await start($)
   expect(calls.panes).toEqual([])
-  await $.command.run({ command: 'board', args: '' })
+  await $.command.run({ command: 'tendr', args: '' })
   expect(calls.panes).toEqual(['open'])
-  await $.command.run({ command: 'board', args: '' })
+  await $.command.run({ command: 'tendr', args: '' })
   expect(calls.panes).toEqual(['open', 'close'])
-  await $.command.run({ command: 'board', args: '' })
+  await $.command.run({ command: 'tendr', args: '' })
   expect(calls.panes).toEqual(['open', 'close', 'open'])
 })
 
@@ -283,7 +292,7 @@ test('不在 herdr 裡時沒有 Herdr 分頁', async ($, on) => {
 test('Herdr 分頁列出這個 session 指揮的 agent 與狀態', async ($, on) => {
   const { calls } = setup(on, { herdr: true })
   await start($)
-  await $.command.run({ command: 'board', args: '' })
+  await $.command.run({ command: 'tendr', args: '' })
   await $.tool.call({ tool: 'Bash', command: 'herdr agent prompt reviewer "幫我審 diff" --wait --timeout 120000' })
   await $.tool.call({ tool: 'Bash', command: 'herdr pane split --current --direction right --no-focus' })
   // 自己的 pane 不算
@@ -312,7 +321,7 @@ test('自動交接開關會存起來', async ($, on) => {
 test('快取剩 5 分鐘時送出交接指示，交接那輪結束後壓縮', async ($, on) => {
   const { clock, calls } = setup(on)
   await start($)
-  await $.command.run({ command: 'board', args: '' })
+  await $.command.run({ command: 'tendr', args: '' })
   await $.prompt.submit({ text: '幫我改首頁', origin: { kind: 'composer' }, wait: false })
   await $.turn.start({ turnId: 't1', text: '幫我改首頁' })
   await step($, 't1')
@@ -345,10 +354,10 @@ test('新 session 的第一個 prompt 附上交接文件，之後的不附', asy
   await $.prompt.submit({ text: '繼續', origin: { kind: 'composer' }, wait: false })
   await $.prompt.submit({ text: '好', origin: { kind: 'composer' }, wait: false })
   expect(calls.contexts[0].length).toBe(1)
-  expect(calls.contexts[0][0]).toContain('baton 交接機制')
+  expect(calls.contexts[0][0]).toContain('tendr 交接機制')
   expect(calls.contexts[0][0]).toContain('下一步：做 RWD')
   expect(calls.contexts[0][0]).toContain('還沒開「任務」分頁')
-  expect(calls.contexts[0][0]).toContain('baton.json')
+  expect(calls.contexts[0][0]).toContain('tendr.json')
   expect(calls.contexts[1]).toEqual([])
 })
 
@@ -372,7 +381,7 @@ test('壓縮後存下摘要、看板可展開，下一個 prompt 再附一次交
   expect(calls.contexts[1][0]).toContain('下一步：做 RWD')
 })
 
-test('沒輸入過 /board 的 session 不自動交接', async ($, on) => {
+test('沒輸入過 /tendr 的 session 不自動交接', async ($, on) => {
   const { clock, calls } = setup(on)
   await start($)
   await $.turn.start({ turnId: 't1', text: 'hi' })
@@ -385,7 +394,7 @@ test('沒輸入過 /board 的 session 不自動交接', async ($, on) => {
 test('上下文太小時不交接', async ($, on) => {
   const { clock, calls } = setup(on, { contextPercent: 5 })
   await start($)
-  await $.command.run({ command: 'board', args: '' })
+  await $.command.run({ command: 'tendr', args: '' })
   await $.turn.start({ turnId: 't1', text: 'hi' })
   await step($, 't1')
   await $.turn.complete({ turnId: 't1', answer: 'hi', durationMs: 10, isAborted: false, usage: null })
@@ -395,7 +404,7 @@ test('上下文太小時不交接', async ($, on) => {
 
 // 走到快取剩不到 5 分鐘、送出交接指示為止
 async function reachHandoff($: any, clock: any) {
-  await $.command.run({ command: 'board', args: '' })
+  await $.command.run({ command: 'tendr', args: '' })
   await $.prompt.submit({ text: '幫我改首頁', origin: { kind: 'composer' }, wait: false })
   await $.turn.start({ turnId: 't1', text: '幫我改首頁' })
   await step($, 't1')
@@ -455,7 +464,38 @@ test('專案覆寫檔：讀專案自己的文件的「## 交接」一節，交�
   expect(files.get(ROOT + '/docs/PROGRESS.md')).toBe(PROGRESS)
 })
 
-test('沒有 baton.json 時讀改名前的 session-board.json', async ($, on) => {
+test('沒有 tendr.json 時讀改名前的 baton.json', async ($, on) => {
+  const { calls } = setup(on, {
+    progress: PROGRESS,
+    legacySettings: 'baton',
+    projectSettings: { handoff_path: 'docs/PROGRESS.md', handoff_section: '## 交接' },
+  })
+  await start($)
+  await $.prompt.submit({ text: '繼續', origin: { kind: 'composer' }, wait: false })
+  const brief = calls.contexts[0][0]
+  expect(brief).toContain(ROOT + '/docs/PROGRESS.md')
+  expect(brief).toContain('下一步：效能')
+})
+
+test('第一次啟動時匯入 baton 的外掛暫存：已有的 key 不覆蓋、別的外掛不碰，之後不再匯入', async ($, on) => {
+  const { files, saved } = setup(on)
+  const store = MAC.home + '/.claude/plugins/store'
+  saved.set('wrap', true)
+  files.set(store + '/baton_baton-abc123.json', JSON.stringify({ wrap: false, 'distill-last': 7, 'talk:-Users-user-Projects-example-app': [{ role: 'user', text: '不要用快捷鍵' }] }))
+  files.set(store + '/other_market-def456.json', JSON.stringify({ foreign: 1 }))
+  await start($)
+  expect(saved.get('wrap')).toBe(true)
+  expect(saved.get('distill-last')).toBe(7)
+  expect((saved.get('talk:-Users-user-Projects-example-app') as any[])[0].text).toBe('不要用快捷鍵')
+  expect(saved.get('foreign')).toBeUndefined()
+  expect(saved.get('imported:baton')).toBe(true)
+  // 匯入過就不再匯入（使用者之後清掉的不會又被舊資料補回來）
+  saved.delete('distill-last')
+  await start($)
+  expect(saved.get('distill-last')).toBeUndefined()
+})
+
+test('沒有 tendr.json 也沒有 baton.json 時讀更早的 session-board.json', async ($, on) => {
   const { calls } = setup(on, {
     progress: PROGRESS,
     legacySettings: true,
@@ -490,7 +530,7 @@ test('使用者在交接指示之前送出的那一輪，不會被當成交接�
 test('快取 5 分鐘時不自動交接', { options: { cache_ttl: '5m' } }, async ($, on) => {
   const { clock, calls } = setup(on)
   await start($)
-  await $.command.run({ command: 'board', args: '' })
+  await $.command.run({ command: 'tendr', args: '' })
   await $.prompt.submit({ text: 'hi', origin: { kind: 'composer' }, wait: false })
   await $.turn.start({ turnId: 't1', text: 'hi' })
   await step($, 't1')
@@ -506,8 +546,8 @@ test('離開超過 away_hours 就不自動交接', { options: { away_hours: '2' 
   const { clock, calls } = setup(on)
   await start($)
   // 開一次看板啟用自動交接，再關掉（關著時每秒不重畫，模擬數小時比較快）
-  await $.command.run({ command: 'board', args: '' })
-  await $.command.run({ command: 'board', args: '' })
+  await $.command.run({ command: 'tendr', args: '' })
+  await $.command.run({ command: 'tendr', args: '' })
   await $.prompt.submit({ text: 'hi', origin: { kind: 'composer' }, wait: false })
   // 70 分鐘後才有一輪（不是使用者送出的，例如排程）；快取剩 5 分鐘時已離開超過 2 小時
   await clock.advance(70 * 60 * 1000)
@@ -541,7 +581,7 @@ test('指揮的 agent 都閒下來後停止查 herdr，再下指令時恢復', a
 })
 
 const BAND = {
-  plugin: 'baton',
+  plugin: 'tendr',
   component: 'AbovePrompt',
   requestId: 'above-prompt',
   viewport: { columns: 160, rows: 40 },
@@ -619,7 +659,7 @@ const LANE_SETTINGS = { tasks_dir: 'docs/lanes/status', handoff_path: 'docs/PROG
 test('任務分頁：要處理的在前，每條一到兩行，帶百分比；完成的收起來', async ($, on) => {
   setup(on, { herdr: true, projectSettings: LANE_SETTINGS, lanes: LANES })
   await start($)
-  await $.command.run({ command: 'board', args: '' })
+  await $.command.run({ command: 'tendr', args: '' })
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
     expect(await ui.find({ key: 'tab-tasks' })).toBeDefined()
@@ -641,7 +681,7 @@ test('任務分頁：要處理的在前，每條一到兩行，帶百分比；�
 test('點開 lane 是子頁：步驟、等你決定、即時畫面；返回回到列表', async ($, on) => {
   const { calls, herdr } = setup(on, { herdr: true, projectSettings: LANE_SETTINGS, lanes: LANES })
   await start($)
-  await $.command.run({ command: 'board', args: '' })
+  await $.command.run({ command: 'tendr', args: '' })
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await ui.press({ key: 'task-ops' })
   expect(await ui.find({ key: 'nav-back' })).toBeDefined()
@@ -660,7 +700,7 @@ test('子頁裡可以回覆 lane、送按鍵，報告是再下一層，返回回
   const { herdr, files } = setup(on, { herdr: true, projectSettings: LANE_SETTINGS, lanes: LANES })
   files.set(ROOT + '/docs/ops-report.md', '# STATUS: BLOCKED\n\n舊 secret 兩個')
   await start($)
-  await $.command.run({ command: 'board', args: '' })
+  await $.command.run({ command: 'tendr', args: '' })
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await ui.press({ key: 'task-ops' })
   await ui.input({ key: 'lane-reply', text: '可以刪' })
@@ -679,7 +719,7 @@ test('Herdr 看到對話框在等確認時，進行中的 lane 也列到需要�
   const { herdr } = setup(on, { herdr: true, projectSettings: LANE_SETTINGS, lanes: { signup: LANES.signup } })
   herdr.agents = HERDR_AGENTS.map((a) => (a.pane_id === 'w9:p5' ? { ...a, agent_status: 'blocked' } : a))
   await start($)
-  await $.command.run({ command: 'board', args: '' })
+  await $.command.run({ command: 'tendr', args: '' })
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: '需要處理 1' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /└ 對話框等確認/ })).toBeDefined()
@@ -743,7 +783,7 @@ test('記憶依 layer 分層：使用者、專案展開，工作線、階段收�
 test('工作線的記憶出現在對應 lane 的子頁', async ($, on) => {
   setup(on, { herdr: true, projectSettings: LANE_SETTINGS, lanes: LANES, memoryFiles: LAYERED })
   await start($)
-  await $.command.run({ command: 'board', args: '' })
+  await $.command.run({ command: 'tendr', args: '' })
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await ui.press({ key: 'task-ops' })
   expect(await ui.find({ type: 'Text', text: '這條線的記憶（1）' })).toBeDefined()
@@ -764,7 +804,7 @@ test('/handoff 不用開看板也能立即交接，交接中再下一次不會�
   expect(calls.toasts).toContain('已經在交接中')
 
   // 引擎實際會在外掛送的訊息前加一段說明
-  await $.turn.start({ turnId: 't1', text: 'The baton plugin sent a message: ' + calls.submits[0] })
+  await $.turn.start({ turnId: 't1', text: 'The tendr plugin sent a message: ' + calls.submits[0] })
   await step($, 't1')
   await $.turn.complete({ turnId: 't1', answer: '已寫好', durationMs: 1000, isAborted: false, usage: null })
   await clock.advance(2000)
@@ -791,7 +831,7 @@ test('macOS：~ 用 HOME 展開，{project} 是專案路徑換成 - 的代號', 
   const brief = calls.contexts[0][0]
   expect(brief).toContain('記憶資料夾：/Users/user/notes/-Users-user-Projects-example-app')
   expect(brief).toContain('交接文件：/Users/user/Projects/example-app/docs/HANDOFF.md')
-  expect(brief).toContain('/Users/user/.claude/projects/-Users-user-Projects-example-app/baton.json')
+  expect(brief).toContain('/Users/user/.claude/projects/-Users-user-Projects-example-app/tendr.json')
 })
 
 test('Windows：USERPROFILE、磁碟代號與反斜線都展開成 / 分隔的路徑', async ($, on) => {
@@ -802,13 +842,13 @@ test('Windows：USERPROFILE、磁碟代號與反斜線都展開成 / 分隔的�
   expect(brief).toContain('交接文件：D:/work/example-app/docs/HANDOFF.md')
   expect(brief).toContain('下一步：做 RWD')
   expect(brief).toContain('記憶資料夾：C:/Users/user/.claude/projects/D--work-example-app/memory')
-  expect(brief).toContain('C:/Users/user/.claude/projects/D--work-example-app/baton.json')
+  expect(brief).toContain('C:/Users/user/.claude/projects/D--work-example-app/tendr.json')
 })
 
 test('英文：Claude Code 的 language 設成英文時，看板、說明與交接指示都用英文', async ($, on) => {
   const { clock, calls } = setup(on, { language: 'English', handoff: '# Handoff\nNext: RWD' })
   await start($)
-  await $.command.run({ command: 'board', args: '' })
+  await $.command.run({ command: 'tendr', args: '' })
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect((await ui.find({ key: 'handoff-now' })).props.label).toBe('Hand off now')
   expect((await ui.find({ key: 'toggle-auto' })).props.label).toBe('Auto-handoff')
@@ -816,7 +856,7 @@ test('英文：Claude Code 的 language 設成英文時，看板、說明與交�
   await ui.unmount()
 
   await $.prompt.submit({ text: 'go on', origin: { kind: 'composer' }, wait: false })
-  expect(calls.contexts[0][0]).toContain('This project uses the baton handoff mechanism')
+  expect(calls.contexts[0][0]).toContain('This project uses the tendr handoff mechanism')
   expect(calls.contexts[0][0]).toContain('Next: RWD')
 
   await $.turn.start({ turnId: 't1', text: 'go on' })
@@ -828,7 +868,7 @@ test('英文：Claude Code 的 language 設成英文時，看板、說明與交�
   expect(calls.submits[0]).toContain(ROOT + '/docs/HANDOFF.md')
 
   // 英文的交接指示也認得出是交接那一輪，結束後壓縮
-  await $.turn.start({ turnId: 't2', text: 'The baton plugin sent a message: ' + calls.submits[0] })
+  await $.turn.start({ turnId: 't2', text: 'The tendr plugin sent a message: ' + calls.submits[0] })
   await step($, 't2')
   await $.turn.complete({ turnId: 't2', answer: 'done', durationMs: 1000, isAborted: false, usage: null })
   await clock.advance(2000)
@@ -840,21 +880,21 @@ test('沒設 language 時看 LANG：zh_TW 用中文', async ($, on) => {
   const zh = setup(on, { language: null, locale: 'zh_TW.UTF-8' })
   await start($)
   await $.prompt.submit({ text: '繼續', origin: { kind: 'composer' }, wait: false })
-  expect(zh.calls.contexts[0][0]).toContain('baton 交接機制')
+  expect(zh.calls.contexts[0][0]).toContain('tendr 交接機制')
 })
 
 test('沒設 language 也沒有 LANG 時用英文', async ($, on) => {
   const { calls } = setup(on, { language: null })
   await start($)
   await $.prompt.submit({ text: 'go on', origin: { kind: 'composer' }, wait: false })
-  expect(calls.contexts[0][0]).toContain('baton handoff mechanism')
+  expect(calls.contexts[0][0]).toContain('tendr handoff mechanism')
 })
 
 test('/config 的 language 優先於 Claude Code 的設定', { options: { language: 'en' } }, async ($, on) => {
   const { calls } = setup(on)
   await start($)
   await $.prompt.submit({ text: 'go on', origin: { kind: 'composer' }, wait: false })
-  expect(calls.contexts[0][0]).toContain('baton handoff mechanism')
+  expect(calls.contexts[0][0]).toContain('tendr handoff mechanism')
 })
 
 // ---------- 防呆提醒 ----------
@@ -1033,7 +1073,7 @@ test('講 3 次以上的要求：新 session 開頭請 Claude 放進專案', asy
 
 // ---------- 守門 ----------
 
-const GUARDS = MAC.home + '/.claude/projects/' + MAC.project + '/baton-guards.json'
+const GUARDS = MAC.home + '/.claude/projects/' + MAC.project + '/tendr-guards.json'
 const guard = (over: object) => ({ id: 1, rule: 'no-push', tool: 'Bash', match: 'git\\s+push', mode: 'deny', message: '推送前先問使用者', state: 'on', at: 0, ...over })
 
 test('啟用的守門：deny 擋下並跳通知，remind 照常執行再附提醒，沒啟用的不管', async ($, on) => {
@@ -1049,6 +1089,15 @@ test('啟用的守門：deny 擋下並跳通知，remind 照常執行再附提�
   const free = await $.tool.call({ tool: 'Bash', command: 'npm publish' })
   expect(free.deny).toBeUndefined()
   expect(free.context ?? []).toEqual([])
+})
+
+test('改名前的 baton-guards.json 搬到 tendr-guards.json 後照常生效', async ($, on) => {
+  const { files } = setup(on)
+  files.set(MAC.home + '/.claude/projects/' + MAC.project + '/baton-guards.json', JSON.stringify([guard({})]))
+  await start($)
+  expect(JSON.parse(files.get(GUARDS) ?? '[]')[0]?.rule).toBe('no-push')
+  const denied = await $.tool.call({ tool: 'Bash', command: 'git push origin main' })
+  expect(denied.deny).toContain('守門 #1')
 })
 
 test('待問的守門：新 session 開頭請 Claude 問使用者，並告訴它改哪個檔；/guard on 啟用', async ($, on) => {

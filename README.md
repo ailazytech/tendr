@@ -1,4 +1,4 @@
-# baton
+# tendr
 
 [English](README.en.md) ｜ 繁體中文
 
@@ -17,7 +17,7 @@ Claude Code 的側邊工作看板（hooks 外掛）。在提示快取過期前**
 - **開新 session 等於失憶**：要自己把交接文件貼回去，或花好幾輪重新解釋背景。
 - **多條線同時跑，不知道誰在等你**：好幾個 agent 各跑一條線，有的卡在權限對話框、有的做完等驗收、有的失敗了，你得一個一個 pane 切過去看。
 
-baton 的做法：
+tendr 的做法：
 
 - **快取剩 5 分鐘時主動交接**：叫 Claude 先把目標、進度、下一步、待決定的事寫進交接文件，再自動壓縮。交接趁快取還沒過期時做，這一輪本身很便宜；之後從乾淨的上下文接續。
 - **新 session／壓縮後自動補上下文**：第一個 prompt 自動附上交接文件，不用自己貼。
@@ -30,19 +30,35 @@ baton 的做法：
 
 ```bash
 claude update                                          # 確認 2.1.287 以上
-claude plugin marketplace add ailazytech/baton   # 或本機路徑
-claude plugin install baton@baton
+claude plugin marketplace add ailazytech/tendr   # 或本機路徑
+claude plugin install tendr@tendr
 ```
 
-開新的 session，輸入 `/board`。
+開新的 session，輸入 `/tendr`。
 
-- `/board`：開關看板。**輸入過 `/board` 的 session 才會啟用自動交接**（當作主控 session）。
+- `/tendr`：開關看板。**輸入過 `/tendr` 的 session 才會啟用自動交接**（當作主控 session）。
 - `/handoff`：立即交接，不用開看板。非全螢幕時滑鼠點不到看板按鈕，就用這個。
 - `/distill`：立即整理筆記（見「自動整理筆記」）。
 - `/guard`：查看與管理守門（見「守門」）。
 - 看板關著時，輸入框上方右側有一顆「◧ 工作看板」按鈕（`/config` 的 `launcher_button` 可關）。
 
 看板要停靠在右側，需要全螢幕版面（`CLAUDE_CODE_NO_FLICKER=1`）且終端至少 110 欄；否則放在輸入框上方。
+
+### 從 baton 升級
+
+tendr 原名 baton。換裝新名稱：
+
+```bash
+claude plugin uninstall baton@baton
+claude plugin marketplace remove baton
+claude plugin marketplace add ailazytech/tendr
+claude plugin install tendr@tendr
+```
+
+- 指令 `/board` 改成 `/tendr`（不再保留 `/board`）
+- 專案覆寫檔：沒有 `tendr.json` 時依序讀 `baton.json`、`session-board.json`，不用搬
+- 守門檔：第一次載入時把 `baton-guards.json` 複製成 `tendr-guards.json`
+- 外掛暫存（還沒整理的對話紀錄、守門命中次數等）：第一次啟動時從 baton 的暫存匯入，已有的不覆蓋
 
 ## 功能
 
@@ -61,7 +77,7 @@ claude plugin install baton@baton
 
 1. 主控 session 每次送出請求，快取就重新計時。
 2. 快取剩 5 分鐘、且符合以下條件時，外掛送出一則以 `[自動交接]`（英文介面是 `[auto-handoff]`）開頭的指示，要 Claude 更新交接文件（或自己的 lane 狀態檔）與記憶：
-   - 這個 session 輸入過 `/board`，且自動交接開著
+   - 這個 session 輸入過 `/tendr`，且自動交接開著
    - `cache_ttl` 是 `1h`（5 分鐘的快取不自動交接，否則一直被打斷）
    - 上下文用量至少 20%（太小不值得壓縮）
    - 最後一次輸入在 `away_hours` 以內，或 Claude 還在跑
@@ -92,7 +108,7 @@ claude plugin install baton@baton
 寫下來也擋不住的要求，改成工具呼叫前的檢查。移植自 ctx-handoff-mod。
 
 - **什麼時候起草**：整理筆記後，某則要求放進專案之後次數又變多（又被糾正），或你不讓它放進專案（`promoted: declined`）卻講了 3 次。也可以 `/guard suggest`
-- **草稿**：模型寫出工具名稱與正規表達式（`match`／`unless`），附一個違規範例和一個正確範例，程式實際比對過才收。存在 `{config}/projects/{project}/baton-guards.json`（不進 repo）
+- **草稿**：模型寫出工具名稱與正規表達式（`match`／`unless`），附一個違規範例和一個正確範例，程式實際比對過才收。存在 `{config}/projects/{project}/tendr-guards.json`（不進 repo）
 - **你同意之前不會生效**：新 session 開頭請 Claude 做完你交代的事後問你；你說要，Claude 直接把檔裡那條的 `state` 改成 `on`（不要就 `off`）。也可以 `/guard on N`
 - **生效後**：`deny` 在執行前擋下並跳通知，`remind` 照常執行、在結果後面提醒 Claude。檢查本身出錯就放行
 - `/guard` 列出全部與命中次數；`/guard off N`、`/guard drop N`、`/guard mode N deny|remind`
@@ -121,7 +137,7 @@ claude plugin install baton@baton
 
 ### 個別專案覆寫
 
-在 `{config}/projects/{project}/baton.json`（不放進專案 repo）覆寫這個專案的設定，存檔後自動重讀。沒有 `baton.json` 時，會讀改名前的 `session-board.json`：
+在 `{config}/projects/{project}/tendr.json`（不放進專案 repo）覆寫這個專案的設定，存檔後自動重讀。沒有 `tendr.json` 時，依序讀改名前的 `baton.json`、`session-board.json`：
 
 ```json
 {
@@ -206,8 +222,8 @@ metadata:
 **在自己的專案開「任務」分頁**
 
 ```text
-我想用 baton 的任務分頁管理這個專案的並行工作。
-請在 ~/.claude/projects/<專案代號>/baton.json 設定 tasks_dir 指向 <資料夾>，
+我想用 tendr 的任務分頁管理這個專案的並行工作。
+請在 ~/.claude/projects/<專案代號>/tendr.json 設定 tasks_dir 指向 <資料夾>，
 在那個資料夾建一份 README 寫清楚 lane 狀態檔的格式與更新規則，
 再為目前進行中的工作各建一個 <lane>.json，主控自己的叫 architect.json。
 ```
@@ -233,9 +249,9 @@ metadata:
 | `{project}` 代號 | `/Users/<名稱>/Projects/app` → `-Users-<名稱>-Projects-app` | `D:\work\app` → `D--work-app` |
 | 檔名大小寫 | APFS 預設不分（外掛比對路徑時不分大小寫） | NTFS 不分 |
 
-- **專案設定寫相對路徑**：`baton.json` 裡的 `handoff_path`、`tasks_dir`、`compact_path`，以及 lane 狀態檔的 `report`、`spec`，都寫相對於專案根目錄的路徑，兩邊都能用
+- **專案設定寫相對路徑**：`tendr.json` 裡的 `handoff_path`、`tasks_dir`、`compact_path`，以及 lane 狀態檔的 `report`、`spec`，都寫相對於專案根目錄的路徑，兩邊都能用
 - **要寫絕對路徑時**：macOS 用 `~/...`；Windows 用 `/` 分隔（`D:/notes`）。JSON 裡的反斜線要跳脫成 `D:\\notes`，用 `/` 比較不會出錯
-- **換電腦時搬專案資料**：`{project}` 代號跟著專案路徑變。舊電腦 `{config}/projects/<舊代號>/` 底下的 `baton.json` 和 `memory/` 要複製到新代號的資料夾，否則記憶分頁是空的、專案覆寫也不會生效
+- **換電腦時搬專案資料**：`{project}` 代號跟著專案路徑變。舊電腦 `{config}/projects/<舊代號>/` 底下的 `tendr.json` 和 `memory/` 要複製到新代號的資料夾，否則記憶分頁是空的、專案覆寫也不會生效
 - **換設定資料夾**：兩邊都可以用 `CLAUDE_CONFIG_DIR` 改 `{config}`
 - **換行字元**：CRLF 讀得懂，不用轉
 
@@ -249,7 +265,7 @@ metadata:
 - macOS Terminal.app：View 選單的「Allow Mouse Reporting」（⌘R）要打開
 - macOS iTerm2：Settings → Profiles → Terminal 的「Enable mouse reporting」要打開
 - Windows Terminal：預設就會傳
-- 點不到的時候改用 `/board`、`/handoff`
+- 點不到的時候改用 `/tendr`、`/handoff`
 
 ### herdr
 

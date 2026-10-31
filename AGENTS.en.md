@@ -6,7 +6,7 @@ This file is for AI agents (Claude Code, Codex, etc.) picking up this repo. User
 
 ## What this is
 
-baton is a Claude Code hooks plugin (the plugin's `hooks/hooks.json` points at one JS module). It draws a work board in a side pane and, right before the prompt cache expires, automatically runs "write handoff → compact conversation". No build step, no npm dependencies.
+tendr (formerly baton) is a Claude Code hooks plugin (the plugin's `hooks/hooks.json` points at one JS module). It draws a work board in a side pane and, right before the prompt cache expires, automatically runs "write handoff → compact conversation". No build step, no npm dependencies.
 
 ## Files
 
@@ -32,7 +32,7 @@ Top to bottom:
 2. **Module-level state**: `let` variables (UI, run state, herdr, lanes, memory, handoff, `phase`). One copy of state per session
 3. **Helpers**: path expansion (`expandPath`, `resolvePaths`), memory parsing (`parseMemory`), lanes (`loadLanes`, `laneStanding`, …), herdr (`parseHerdr`, `refreshHerdr`), handoff (`briefing`, `handoffPrompt`, `startHandoff`, `runCompact`, `checkTrigger`)
 4. **`register(on, options)`** registers hooks:
-   - `session.start`: load settings and data, start the 1 s tick (`$.clock.every`), register `/board`, `/handoff`, `/distill`, `/guard`
+   - `session.start`: load settings and data, start the 1 s tick (`$.clock.every`), register `/tendr`, `/handoff`, `/distill`, `/guard`
    - `prompt.submit`: attach `briefing()`, said-3-times requests (`T.promote`) and guards to ask about (`T.guardAsk`) to the user's first prompt; log every user message for notes (`recordTalk`) and carry the previous turn's reply-language reminder
    - `turn.start` / `turn.step` / `turn.complete`: run state, cache timer (`lastRequestAt`), trigger compaction after the handoff turn; `turn.step` checks the reply language, `turn.complete` logs the answer and triggers notes every `distill_every` messages
    - `classic.Stop`: return `block` when Claude claims done without verifying (`doneCheck`)
@@ -45,7 +45,7 @@ Top to bottom:
 
 `phase`: `idle` → `handoff` (the handoff instruction was sent, prefixed with the current language's `handoffPrefix`) → `compacting` → `idle`.
 
-- `checkTrigger` runs every second and calls `startHandoff` only if all hold: `activated` (session ran `/board`), `auto`, `armed` (re-armed only after new user activity), `cacheTtl === '1h'`, 0–5 minutes remaining, user not away longer than `away_hours`, context ≥ 20%
+- `checkTrigger` runs every second and calls `startHandoff` only if all hold: `activated` (session ran `/tendr`), `auto`, `armed` (re-armed only after new user activity), `cacheTtl === '1h'`, 0–5 minutes remaining, user not away longer than `away_hours`, context ≥ 20%
 - Only the turn whose `turn.start` text contains `HANDOFF_PREFIX` counts as the handoff turn (the engine prefixes plugin messages, so use `includes`, not `startsWith`)
 - If that turn is aborted, don't compact; if `session.compact` is refused (a turn is still running), retry up to 6 times
 - With `tasks_dir`, the instruction and briefing switch to the lane status file variant (`laneBriefing`, the `tasksDir` branch of `handoffPrompt`)
@@ -55,8 +55,8 @@ Top to bottom:
 
 - The conversation log (`talk`) is kept per project in `$.store` under `talk:<project slug>` (not per session: whatever wasn't distilled must carry over to the next session). It holds only messages the user typed (`composer` / `bridge` in `prompt.submit`, slash commands excluded) and the main thread's answers. The sent portion is dropped only after a successful pass; on failure it stays for the next one
 - Every entry in the notes model's output must carry a `quote`, which `parseActions` checks against the user's own messages and drops on mismatch. This keeps the model from recording Claude's words or its own inferences as user requests — don't remove it
-- Memory files are changed only in frontmatter `metadata` (`setMeta`), never in the body; new memories get `metadata.source: baton`
-- Guards live in `{config}/projects/{project}/baton-guards.json`. When the user agrees, Claude edits that file directly (`tool.call` reloads it when it's written); no extra command needed
+- Memory files are changed only in frontmatter `metadata` (`setMeta`), never in the body; new memories get `metadata.source: tendr`
+- Guards live in `{config}/projects/{project}/tendr-guards.json` (the pre-rename `baton-guards.json` is copied over on first load). When the user agrees, Claude edits that file directly (`tool.call` reloads it when it's written); no extra command needed
 - `tool.call` is a gating hook: anything new in it must be wrapped in `try` / `catch` and let the call through on error
 
 ## Conventions

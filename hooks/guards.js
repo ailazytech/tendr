@@ -1,6 +1,6 @@
 // 守門的判斷邏輯（不碰 $、不放介面文字）：寫成文字還一再被違反的要求，起草成工具呼叫前的正規表達式比對，使用者同意才生效。
 // 移植自 ctx-handoff-mod（MIT，Copyright (c) 2026 cablate）的 hooks/guards.ts。
-// 守門存在專案覆寫檔旁的 baton-guards.json，使用者在對話裡同意後由 Claude 直接改檔裡的 state。
+// 守門存在專案覆寫檔旁的 tendr-guards.json，使用者在對話裡同意後由 Claude 直接改檔裡的 state。
 // 給模型的起草提示、給 Claude 的詢問與命中提醒在 register.js 的 I18N（guardPrompt、guardAsk、guardHead）
 
 export const GUARD_MIN_COUNT = 3
