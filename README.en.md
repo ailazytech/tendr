@@ -280,6 +280,21 @@ Sessions started in a terminal of the herdr desktop app (herdr-core) get the Her
 - "Same workspace" means the same app space
 - `hc send` / `keys` / `run` / `interrupt` … inside Bash are recorded as targets this session commanded; for `hc run` without `--name`, the returned address is recorded
 
+#### The tendr board inside the app
+
+The app's right-side panel can hold a tendr board too (lanes and lane pages, live screen, keys, replies, handoff document, memories), without switching to the Claude Code session:
+
+```bash
+node app/install.mjs --layout my-main   # use your layout's name
+```
+
+- The app's built-in layouts are read-only (restored on every start): Duplicate layout from the command palette first, then install into the copy. `--layout` adds a `tendr` block to its right-side panel (stack `panel-body`); for layouts without that stack, place `{ "mod": "tendr-board" }` yourself
+- Open it with `herdr-app do layout.select '{"stack":"panel-body","child":"tendr"}'` then `herdr-app do layout.show '{"id":"panel"}'`, or build your own button / key. To have the tab bar remember it per space, add `tendr` to the shared `workspace.panels`
+- Which project: the focused terminal's folder (focused, then same tab, then same space), the first one with `tendr.json` (or a pre-rename file)
+- Commands (`herdr-app do tendr-board.<command>` or `tendr-board:<command>` in `keys.json`): `urgent` jumps to the lane that needs you most, `next` / `prev` move in list order, `back` returns to the list
+- Data is read by `app/board-data.mjs` with the plugin's path rules; install records absolute paths to node and that script, so reinstall after moving the repo
+- A lane needs `pane` set to an hc address (`t7`) or name for the live screen; one `hc read` takes about 2–3 s
+
 ## Development
 
 A marketplace added from a local folder reads that folder directly: saving a file hot-reloads running sessions — no version bump or update needed. Don't also load the same folder with `--plugin-dir`, or it loads twice.

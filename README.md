@@ -280,6 +280,21 @@ metadata:
 - 「同工作區」以 App 的 space 為準
 - Bash 裡的 `hc send`／`keys`／`run`／`interrupt`… 會記成這個 session 指揮的目標；`hc run` 沒給 `--name` 時從回傳的位址記
 
+#### 在 App 裡開 tendr 看板
+
+App 的右側面板也可以放一份 tendr 看板（lane 一覽與子頁、即時畫面、按鍵、回覆、交接文件、記憶），不用切到 Claude Code 的 session：
+
+```bash
+node app/install.mjs --layout my-main   # my-main 換成你的 layout
+```
+
+- App 內建的 layout 是唯讀的（每次啟動會換回原版）：先在命令面板 Duplicate layout，再裝到複製的那份。`--layout` 會在它的右側面板（stack `panel-body`）加一個 `tendr` 區塊；沒有這個 stack 的 layout 要自己放 `{ "mod": "tendr-board" }`
+- 打開：`herdr-app do layout.select '{"stack":"panel-body","child":"tendr"}'` 再 `herdr-app do layout.show '{"id":"panel"}'`，或自己做個按鈕／快捷鍵。要讓 tab 列依 space 記住開關，把 `tendr` 加進 shared 的 `workspace.panels`
+- 看哪個專案：聚焦的終端機資料夾（依序是聚焦的、同一個分頁、同一個 space 的），第一個有 `tendr.json`（或改名前的檔名）的
+- 指令（`herdr-app do tendr-board.<指令>` 或 `keys.json` 綁 `tendr-board:<指令>`）：`urgent` 跳到最需要處理的 lane、`next`／`prev` 照列表順序換、`back` 回列表
+- 資料由 `app/board-data.mjs` 讀，路徑規則與外掛相同；安裝時記下 node 與這支腳本的絕對路徑，搬了 repo 要重裝
+- lane 的 `pane` 寫 hc 位址（`t7`）或名稱，才有即時畫面；`hc read` 一次約 2～3 秒
+
 ## 開發
 
 從本機資料夾加入的 marketplace，安裝版直接讀這個資料夾，存檔後執行中的 session 會自動重載，不用改版本號或跑 update。不要再同時用 `--plugin-dir` 載入同一個資料夾，否則會載入兩份。

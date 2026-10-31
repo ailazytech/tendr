@@ -22,6 +22,9 @@ tendr (formerly baton) is a Claude Code hooks plugin (the plugin's `hooks/hooks.
 | `.claude-plugin/types/` | Type declarations shipped by Claude Code (`claude-code`, `claude-code-tools`, `claude-code-mcp`); gitignored, don't edit |
 | `tests/board.test.ts` | Integration tests, using `test`, `mock`, `expect` from `claude-code/testing` |
 | `tests/logic.test.ts` | Pure-function tests for `nudges.js`, `notes.js`, `guards.js` |
+| `app/mod/` | The herdr app board mod (QuickJS + gpui-kit; semicolons like the app's built-in mods). Rendering and `hc` calls only; data comes from `board-data.mjs` |
+| `app/board-data.mjs` | Data for the app board: picks the project, reads lanes, handoff document, memories. Path rules must match `expandPath` in `register.js` |
+| `app/install.mjs` | Installs the mod into `~/.config/herdr-app/mods/tendr-board`, writes `config.js`, optionally adds it to a layout |
 | `README.md` / `README.en.md` | User docs (Chinese / English) |
 
 ## Structure of register.js

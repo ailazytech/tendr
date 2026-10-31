@@ -22,6 +22,9 @@ tendr（原名 baton）是 Claude Code 的 hooks 外掛（plugin 的 `hooks/hook
 | `.claude-plugin/types/` | Claude Code 提供的型別宣告（`claude-code`、`claude-code-tools`、`claude-code-mcp`），已 gitignore，不要手改 |
 | `tests/board.test.ts` | 整合測試，用 `claude-code/testing` 的 `test`、`mock`、`expect` |
 | `tests/logic.test.ts` | `nudges.js`、`notes.js`、`guards.js` 的純函式測試 |
+| `app/mod/` | herdr App 的看板 mod（QuickJS + gpui-kit，風格跟 App 內建 mod 一樣用分號）。只畫畫面與呼叫 `hc`，資料由 `board-data.mjs` 給 |
+| `app/board-data.mjs` | 給 App 看板的資料：挑專案、讀 lane、交接文件、記憶。路徑規則必須與 `register.js` 的 `expandPath` 一致 |
+| `app/install.mjs` | 把 mod 裝進 `~/.config/herdr-app/mods/tendr-board`、寫 `config.js`，可選擇加進某個 layout |
 | `README.md`／`README.en.md` | 使用者文件（中英） |
 
 ## register.js 的結構
