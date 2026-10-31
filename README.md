@@ -310,7 +310,7 @@ herdr App 關掉視窗、更新都不會中斷終端機；但重開機或登出�
 
 herdr App 只認程式自己用 OSC 7501（Program Status Protocol）回報的狀態。Claude Code 2.1.295 起會回報，但要先送 `OSC 7501 ; ?` 問到終端機支援；Windows 的 ConPTY 把終端機的回覆濾掉，Claude Code 就當成不支援、一直不報，側邊欄看不到它在工作、等你或完成。
 
-tendr 在 **Windows 的 herdr App** 裡替它報：一輪開始 `working`、跳出權限確認或提問 `blocked`、答完 `done`、被中斷 `idle`、離開時清掉。外掛起的子程式沒接在終端機的主控台上，所以 `hooks/osc7501.ps1` 用 `AttachConsole` 掛到終端機裡 shell 的主控台寫進去（每次約 0.4 秒，依序送、只留最新的）。macOS／Linux 上 Claude Code 自己會報，tendr 不插手。
+tendr 在 **Windows 的 herdr App** 裡替它報：一輪開始 `working`、跳出權限確認或提問 `blocked`、答完 `done`、被中斷 `idle`、一輪外的壓縮（自動交接、手動 `/compact`）`working` 壓完回到 `done`、離開時清掉。外掛起的子程式沒接在終端機的主控台上，所以 `hooks/osc7501.ps1` 用 `AttachConsole` 掛到終端機裡 shell 的主控台寫進去（每次約 0.4 秒，依序送、只留最新的）。macOS／Linux 上 Claude Code 自己會報，tendr 不插手。
 
 ## 開發
 

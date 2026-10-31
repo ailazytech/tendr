@@ -443,6 +443,25 @@ test('Windows 的 herdr App：替 Claude 回報 OSC 7501（啟動、工作、等
   expect(statusPayloads(herdr).at(-1)).toBe('state=clear')
 })
 
+test('Windows 的 herdr App：一輪外的壓縮顯示工作中、壓完回到完成；precompute 與一輪中途的自動壓縮不動', async ($, on) => {
+  const { herdr, clock } = setup(on, { hc: true, windows: true })
+  const settle = () => clock.advance(10)
+  await start($)
+  await settle()
+  // 手動 /compact（自動交接的壓縮也在一輪外）
+  await $.session.compact({ trigger: 'manual', messages: [] })
+  await settle()
+  // 只是先算摘要
+  await $.session.compact({ trigger: 'precompute', messages: [] })
+  await settle()
+  // 一輪中途上下文滿了的自動壓縮：本來就是工作中
+  await $.turn.start({ turnId: 't1', text: '繼續' })
+  await settle()
+  await $.session.compact({ trigger: 'auto', messages: [] })
+  await settle()
+  expect(statusPayloads(herdr)).toEqual(['state=idle:app=claude', 'state=working:app=claude', 'state=done:app=claude', 'state=working:app=claude'])
+})
+
 test('不是 Windows 的 herdr App 就不替 Claude 回報狀態（macOS 的 App、Windows 的 herdr 終端機版）', async ($, on) => {
   const mac = setup(on, { hc: true })
   await start($)

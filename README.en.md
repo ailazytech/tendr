@@ -310,7 +310,7 @@ Closing or updating the herdr app doesn't stop terminals, but after a reboot or 
 
 The herdr app only shows status that programs report themselves through OSC 7501 (the Program Status Protocol). Claude Code reports it since 2.1.295, but only after its `OSC 7501 ; ?` query gets an answer; on Windows, ConPTY filters the terminal's reply, so Claude Code decides it is unsupported and never reports, and the sidebar can't tell whether it is working, waiting on you or done.
 
-In the **herdr app on Windows**, tendr reports for it: `working` when a turn starts, `blocked` on a permission prompt or a question, `done` when it answers, `idle` when interrupted, cleared on exit. Plugin child processes aren't attached to the terminal's console, so `hooks/osc7501.ps1` uses `AttachConsole` to write into the console of the terminal's shell (about 0.4 s each, sent in order, latest only). On macOS / Linux Claude Code reports by itself and tendr stays out of it.
+In the **herdr app on Windows**, tendr reports for it: `working` when a turn starts, `blocked` on a permission prompt or a question, `done` when it answers, `idle` when interrupted, `working` during a compaction outside a turn (auto-handoff, manual `/compact`) and `done` after it, cleared on exit. Plugin child processes aren't attached to the terminal's console, so `hooks/osc7501.ps1` uses `AttachConsole` to write into the console of the terminal's shell (about 0.4 s each, sent in order, latest only). On macOS / Linux Claude Code reports by itself and tendr stays out of it.
 
 ## Development
 

@@ -2194,7 +2194,16 @@ export function register(on, options) {
   on('session.compact', async ($, e, next) => {
     // 主對話真的要壓縮時跑同步指令（precompute 只是先算摘要）；手動 /compact 也算
     if (!e.agentId && e.trigger !== 'precompute') void runSync($)
-    const result = await next(e)
+    // 在一輪外壓縮（自動交接、手動 /compact）要跑幾十秒：App 顯示工作中，壓完回到完成。
+    // 一輪中途的自動壓縮本來就是工作中，不動
+    const outside = !e.agentId && e.trigger !== 'precompute' && !working
+    if (outside) reportStatus($, 'working')
+    let result
+    try {
+      result = await next(e)
+    } finally {
+      if (outside && !working) reportStatus($, 'done')
+    }
     if (!e.agentId && e.trigger !== 'precompute' && !result.skip) {
       lastRequestAt = 0
       needsBriefing = true
