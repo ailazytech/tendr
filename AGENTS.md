@@ -30,14 +30,14 @@ tendr（原名 baton）是 Claude Code 的 hooks 外掛（plugin 的 `hooks/hook
 
 1. **常數**：快取 TTL（`CACHE_TTLS`）、提前交接時間（`LEAD_MS` = 5 分鐘）、最低上下文（`MIN_CONTEXT_PERCENT` = 20）、lane 狀態順序與外觀（`LANE_ORDER`、`LANE_LOOK`）、記憶分層（`LAYERS`）、所有介面與提示文字（`I18N`）
 2. **模組層級的狀態**：`let` 變數（介面、執行狀態、herdr、lane、記憶、交接、`phase`）。整個外掛是一個 session 一份狀態
-3. **工具函式**：路徑展開（`expandPath`、`resolvePaths`）、記憶解析（`parseMemory`）、lane（`loadLanes`、`laneStanding`…）、herdr（`parseHerdr`、`refreshHerdr`）、交接（`briefing`、`handoffPrompt`、`startHandoff`、`runCompact`、`checkTrigger`）
+3. **工具函式**：路徑展開（`expandPath`、`resolvePaths`）、記憶解析（`parseMemory`）、lane（`loadLanes`、`laneStanding`…）、herdr（`parseHerdr`、`parseHc`、`hcAgents`、`refreshHerdr`）、交接（`briefing`、`handoffPrompt`、`startHandoff`、`runCompact`、`checkTrigger`）
 4. **`register(on, options)`**：註冊 hook
    - `session.start`：讀設定與資料、每秒 tick（`$.clock.every`）、註冊 `/tendr`、`/handoff`、`/distill`、`/guard`
    - `prompt.submit`：使用者第一個 prompt 附上 `briefing()`、講 3 次的要求（`T.promote`）、待問的守門（`T.guardAsk`）；每則使用者訊息記進整理筆記用的對話紀錄（`recordTalk`），並帶出上一輪的回覆語言提醒
    - `turn.start`／`turn.step`／`turn.complete`：執行狀態、快取計時（`lastRequestAt`）、交接那一輪結束後觸發壓縮；`turn.step` 判斷回覆語言，`turn.complete` 記下回答、每 `distill_every` 則訊息觸發整理
    - `classic.Stop`：說完成了卻沒驗證時回 `block`（`doneCheck`）
    - `session.compact`、`classic.PostCompact`：存壓縮摘要
-   - `tool.call`：守門比對（`findGuardHit`，deny 直接回 `deny`）、記錄工具呼叫、防呆觀察（`watchCall`：連續失敗、改檔與驗證）、偵測 Bash 裡的 herdr 指令、改了記憶／守門檔就重讀
+   - `tool.call`：守門比對（`findGuardHit`，deny 直接回 `deny`）、記錄工具呼叫、防呆觀察（`watchCall`：連續失敗、改檔與驗證）、偵測 Bash 裡的 herdr／hc 指令、改了記憶／守門檔就重讀
    - `ui.render`（`AbovePrompt`、`Pane`）：畫按鈕與看板
 5. 看板畫面在 `ui.render { component: 'Pane' }` 裡，用 `$.ui.resolve(e)` 拿到 `Box`、`Button`、`Markdown` 等元件，依 `tab` 與 `route`（任務分頁的子頁堆疊）組出列。
 
@@ -67,7 +67,7 @@ tendr（原名 baton）是 Claude Code 的 hooks 外掛（plugin 的 `hooks/hook
 - **註解**：寫「為什麼」，尤其是引擎行為的限制（例如「command.run 裡不能直接 prompt.submit」）
 - **路徑**：內部一律轉成 `/` 分隔；比對用 `samePath`（不分大小寫）。新功能要同時考慮 macOS（`HOME`）與 Windows（`USERPROFILE`、磁碟代號）
 - **錯誤**：讀檔失敗不要丟例外讓看板壞掉，寫到 `note` 或對應的 `*Error` 變數，在看板上顯示
-- **外部指令**：只透過 `$.process.run` 呼叫 herdr；執行檔用 `herdrBin`（`HERDR_BIN_PATH` 或 `herdr`）
+- **外部指令**：只透過 `$.process.run` 呼叫 herdr；執行檔用 `herdrBin`（`HERDR_BIN_PATH` 或 `herdr`；herdr App 裡是 `hc`）。兩種環境由 `herdrKind`（`herdr`／`hc`）區分，App 的 agent 先用 `hcAgents` 轉成 herdr agent list 的形狀，畫面與判斷只寫一套
 - **重畫**：狀態改變後呼叫 `$.ui.invalidate('ui.render')`；看板關著時 tick 不重畫
 - **持久化**：跨重載要保留的值用 `$.store`，key 帶 `sessionId`（例如 `times:<id>`、`herdr:<id>`）
 - **設定**：新增使用者設定要同時改 `plugin.json` 的 `userConfig`、`register()` 開頭讀 `options` 的地方、兩份 README 的設定表

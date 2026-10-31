@@ -65,12 +65,12 @@ claude plugin install tendr@tendr
 ### 分頁
 
 - **任務**（專案設了 `tasks_dir` 才出現，見「lane 狀態檔」）：每條 lane 一到兩行＋百分比，要處理的（等你、失敗、待審、對話框等確認）排最前，待命與完成的收起來
-  - 點一條 lane 進子頁：步驟、等你決定的事、備註、即時畫面（`herdr pane read`，每 3 秒更新）、按鍵（Enter／Esc／1／2／3）、回覆輸入框（`herdr agent prompt`）、報告、這條線的記憶
+  - 點一條 lane 進子頁：步驟、等你決定的事、備註、即時畫面（`herdr pane read`／App 是 `hc read`，每 3 秒更新）、按鍵（Enter／Esc／1／2／3）、回覆輸入框（`herdr agent prompt`／App 是 `hc send`）、報告、這條線的記憶
   - 報告是再下一層子頁；「← 返回」一層層退回，回到列表時捲回剛才那一列
   - 別的 lane 變成等你、待審、失敗時跳通知
 - **記憶**：依 frontmatter 的 `metadata.layer` 分成使用者／專案／工作線／階段；工作線的記憶用 `metadata.lane` 掛到 lane 子頁，階段記憶過了 `metadata.review_by` 會標「該檢查了」；沒標 layer 的歸「未分層」，依類型分組
 - **進度**（有任務分頁時叫「交接」）：執行狀態、任務、上下文用量、交接文件
-- **Herdr**（在 herdr 裡、且沒有任務分頁時才出現）：這個 session 透過 herdr 指揮過的 agent／pane 與即時狀態，blocked 或 done 時跳通知
+- **Herdr**（在 herdr 或 herdr App 裡、且沒有任務分頁時才出現）：這個 session 透過 herdr（App 是 `hc`）指揮過的 agent／pane 與即時狀態，blocked 或 done 時跳通知
 - **底部**：目前模型、快取倒數、自動交接開關
 
 ### 自動交接的流程
@@ -172,7 +172,7 @@ claude plugin install tendr@tendr
 ```
 
 - 必填：`lane`、`title`（一行）、`state`（`blocked`／`failed`／`review`／`working`／`idle`／`done`）、`steps`（`{ id, title, state: todo|doing|done|skip }`）、`updated`
-- 選填：`needs`（等使用者決定的事）、`pane`（herdr pane id）、`spec`、`head`、`report`（報告檔路徑）、`notes`
+- 選填：`needs`（等使用者決定的事）、`pane`（herdr pane id；herdr App 是終端機位址如 `t7` 或名稱）、`spec`、`head`、`report`（報告檔路徑）、`notes`
 - 百分比＝完成步驟 ÷（總數 − 跳過）
 - 專案自己的規則與驗證工具寫在該資料夾的 README
 
@@ -271,6 +271,14 @@ metadata:
 
 - macOS：herdr 通常裝在 `~/.local/bin/herdr`。在 herdr 裡開的 session 會用 `HERDR_BIN_PATH`，不靠 PATH；不是在 herdr 裡開的，要確認 `~/.local/bin` 在 PATH 上
 - Windows：`herdr.exe` 要在 PATH 上
+
+### herdr App
+
+在 herdr 桌面 App（herdr-core）的終端機裡開的 session 也有 Herdr 分頁與 lane 即時畫面：App 不設 `HERDR_*`，tendr 看到 `HC_TERMINAL_ID` 就改用 `hc`（`hc ls --json`、`hc read`、`hc send`、`hc keys`），`hc` 要在 PATH 上（App 安裝時會加）。
+
+- agent 清單只列有回報狀態（OSC 7501）的終端機；hc 不認 agent 品牌，不回報的程式（例如 Windows 上的 Claude Code）不會出現在清單裡，但 lane 的即時畫面、回覆、按鍵照常能用
+- 「同工作區」以 App 的 space 為準
+- Bash 裡的 `hc send`／`keys`／`run`／`interrupt`… 會記成這個 session 指揮的目標；`hc run` 沒給 `--name` 時從回傳的位址記
 
 ## 開發
 

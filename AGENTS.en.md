@@ -30,14 +30,14 @@ Top to bottom:
 
 1. **Constants**: cache TTLs (`CACHE_TTLS`), handoff lead time (`LEAD_MS` = 5 min), minimum context (`MIN_CONTEXT_PERCENT` = 20), lane state order and look (`LANE_ORDER`, `LANE_LOOK`), memory layers (`LAYERS`), all UI and prompt text (`I18N`)
 2. **Module-level state**: `let` variables (UI, run state, herdr, lanes, memory, handoff, `phase`). One copy of state per session
-3. **Helpers**: path expansion (`expandPath`, `resolvePaths`), memory parsing (`parseMemory`), lanes (`loadLanes`, `laneStanding`, …), herdr (`parseHerdr`, `refreshHerdr`), handoff (`briefing`, `handoffPrompt`, `startHandoff`, `runCompact`, `checkTrigger`)
+3. **Helpers**: path expansion (`expandPath`, `resolvePaths`), memory parsing (`parseMemory`), lanes (`loadLanes`, `laneStanding`, …), herdr (`parseHerdr`, `parseHc`, `hcAgents`, `refreshHerdr`), handoff (`briefing`, `handoffPrompt`, `startHandoff`, `runCompact`, `checkTrigger`)
 4. **`register(on, options)`** registers hooks:
    - `session.start`: load settings and data, start the 1 s tick (`$.clock.every`), register `/tendr`, `/handoff`, `/distill`, `/guard`
    - `prompt.submit`: attach `briefing()`, said-3-times requests (`T.promote`) and guards to ask about (`T.guardAsk`) to the user's first prompt; log every user message for notes (`recordTalk`) and carry the previous turn's reply-language reminder
    - `turn.start` / `turn.step` / `turn.complete`: run state, cache timer (`lastRequestAt`), trigger compaction after the handoff turn; `turn.step` checks the reply language, `turn.complete` logs the answer and triggers notes every `distill_every` messages
    - `classic.Stop`: return `block` when Claude claims done without verifying (`doneCheck`)
    - `session.compact`, `classic.PostCompact`: save the compaction summary
-   - `tool.call`: guard matching (`findGuardHit`; deny returns `deny`), track tool calls, nudges (`watchCall`: repeated failures, edit/verify), detect herdr commands inside Bash, reload memory / guards when their files are written
+   - `tool.call`: guard matching (`findGuardHit`; deny returns `deny`), track tool calls, nudges (`watchCall`: repeated failures, edit/verify), detect herdr / hc commands inside Bash, reload memory / guards when their files are written
    - `ui.render` (`AbovePrompt`, `Pane`): draw the launcher button and the board
 5. The board is built in `ui.render { component: 'Pane' }`: `$.ui.resolve(e)` returns `Box`, `Button`, `Markdown`, etc., and rows are assembled from `tab` and `route` (the sub-page stack of the Tasks tab).
 
@@ -67,7 +67,7 @@ Top to bottom:
 - **Comments**: explain *why*, especially engine constraints (e.g. "can't call prompt.submit inside command.run")
 - **Paths**: always normalized to `/`; compare with `samePath` (case-insensitive). New features must handle macOS (`HOME`) and Windows (`USERPROFILE`, drive letters)
 - **Errors**: a failed read must not throw and break the board; store it in `note` or the relevant `*Error` variable and show it
-- **External commands**: herdr is called only through `$.process.run`, using `herdrBin` (`HERDR_BIN_PATH` or `herdr`)
+- **External commands**: herdr is called only through `$.process.run`, using `herdrBin` (`HERDR_BIN_PATH` or `herdr`; `hc` in the herdr app). `herdrKind` (`herdr` / `hc`) tells the two apart; app agents are first mapped to the herdr agent list shape by `hcAgents`, so rendering and logic stay single
 - **Redraw**: call `$.ui.invalidate('ui.render')` after state changes; the tick doesn't redraw while the board is closed
 - **Persistence**: values that must survive reloads go in `$.store`, keyed with `sessionId` (e.g. `times:<id>`, `herdr:<id>`)
 - **Settings**: a new user setting touches `userConfig` in `plugin.json`, the `options` reads at the top of `register()`, and the settings table in both READMEs

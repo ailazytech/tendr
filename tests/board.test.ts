@@ -47,6 +47,15 @@ const HERDR_AGENTS = [
   { agent: 'grok', agent_status: 'idle', pane_id: 'wP:p1', workspace_id: 'wP' },
 ]
 
+// herdr App 的 hc ls --json：t4 是自己（Claude Code 不回報 OSC 7501，沒有 status）、t5 是一般 shell、t6 在別的 space
+const HC_TERMINALS = [
+  { address: 't4', agent: 'pwsh.exe', cwd: 'D:\\work\\example-app', state: 'live', turn: 0, where: '範例 / 1' },
+  { address: 't7', agent: 'codex', name: 'reviewer', state: 'live', status: 'blocked', turn: 3, where: '範例 / 2' },
+  { address: 't9', agent: 'antigravity', state: 'live', status: 'working', turn: 5, where: '範例 / 1' },
+  { address: 't5', agent: 'pwsh.exe', state: 'live', turn: 0, where: '範例 / 3' },
+  { address: 't6', agent: 'claude', state: 'live', status: 'idle', turn: 1, where: '別的專案 / 1' },
+]
+
 const PROJECT_SETTINGS = MAC.home + '/.claude/projects/' + MAC.project + '/tendr.json'
 
 // lane 狀態檔放在專案的 docs/lanes/status
@@ -58,6 +67,8 @@ function setup(
     contextPercent?: number
     handoff?: string
     herdr?: boolean
+    // 在 herdr App（herdr-core）裡：只有 HC_TERMINAL_ID，指令是 hc
+    hc?: boolean
     projectSettings?: object
     // 專案覆寫檔放在改名前的檔名：'baton' 是 baton.json，true 是更早的 session-board.json
     legacySettings?: boolean | 'baton'
@@ -83,23 +94,36 @@ function setup(
     ...(extra.windows ? { USERPROFILE: WIN.home } : { HOME: MAC.home }),
     ...(extra.locale ? { LANG: extra.locale } : {}),
     ...(extra.herdr ? { HERDR_ENV: '1', HERDR_BIN_PATH: HERDR_BIN, HERDR_PANE_ID: 'w9:p7', HERDR_WORKSPACE_ID: 'w9' } : {}),
+    ...(extra.hc ? { HC_TERMINAL_ID: 't4' } : {}),
   })
   const memoryFiles = extra.memoryFiles ?? MEMORY_FILES
-  // herdr agent list 的回傳可在測試中改變；runs 記錄查了幾次 agent list，argv 記錄每一次呼叫
-  const herdr = { agents: HERDR_AGENTS as any[], runs: 0, argv: [] as string[][], screen: '● 正在跑測試\n  ⎿ 12 pass\n' }
+  // herdr agent list（App 是 hc ls）的回傳可在測試中改變；runs 記錄查了幾次，argv 記錄每一次呼叫
+  const herdr = { agents: HERDR_AGENTS as any[], terminals: HC_TERMINALS as any[], runs: 0, argv: [] as string[][], screen: '● 正在跑測試\n  ⎿ 12 pass\n' }
   on('process.run', ($: any, e: any) => {
     const argv = e.argv ?? e.command ?? e.args ?? []
     herdr.argv.push(argv)
+    if (argv[0] === 'hc') {
+      if (argv[1] === 'read') return { value: { exitCode: 0, stdout: herdr.screen, stderr: '' } }
+      if (argv[1] === 'ls') {
+        herdr.runs += 1
+        return { value: { exitCode: 0, stdout: JSON.stringify({ hidden_finished: 0, terminals: herdr.terminals }), stderr: '' } }
+      }
+      return { value: { exitCode: 0, stdout: '{}', stderr: '' } }
+    }
     if (argv[1] === 'pane' && argv[2] === 'read') return { value: { exitCode: 0, stdout: herdr.screen, stderr: '' } }
     if (argv[1] === 'agent' && argv[2] === 'list') herdr.runs += 1
     return { value: { exitCode: 0, stdout: JSON.stringify({ result: { agents: herdr.agents } }), stderr: '' } }
   })
   // 工具回傳與每一步的回答可在測試中改：tools.reply 回傳物件就用它（例如失敗），tools.answer／toolUses 是 turn.step 的結果
   const tools = { reply: undefined as undefined | ((e: any) => any), answer: 'ok', toolUses: [] as unknown[] }
-  // herdr pane split 回傳新 pane；其他 Bash 回 ok
+  // herdr pane split 回傳新 pane、hc run 回傳新終端機；其他 Bash 回 ok
   on('tool.call', ($: any, e: any) =>
     tools.reply?.(e) ?? {
-      result: /pane split/.test(e.command ?? '') ? '{"result":{"pane":{"pane_id":"w9:pA"}}}' : 'ok',
+      result: /pane split/.test(e.command ?? '')
+        ? '{"result":{"pane":{"pane_id":"w9:pA"}}}'
+        : /\bhc run\b/.test(e.command ?? '')
+          ? '{"address":"t8","state":"live"}'
+          : 'ok',
     },
   )
   const saved = new Map<string, unknown>()
@@ -306,6 +330,34 @@ test('Herdr 分頁列出這個 session 指揮的 agent 與狀態', async ($, on)
   expect(await ui.find({ type: 'Text', text: /w9:pA · 已結束或不是 agent pane/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /同工作區的其他 agent（1）/ })).toBeDefined()
   await ui.unmount()
+  expect(calls.toasts).toEqual([])
+})
+
+test('herdr App 裡（只有 HC_TERMINAL_ID）：Herdr 分頁列出用 hc 指揮的終端機與同一個 space 的 agent', async ($, on) => {
+  const { calls, herdr } = setup(on, { hc: true })
+  await start($)
+  await $.command.run({ command: 'tendr', args: '' })
+  await $.tool.call({ tool: 'Bash', command: 'hc send reviewer "幫我審 diff"' })
+  // 沒給 --name：位址從回傳的 JSON 讀
+  await $.tool.call({ tool: 'Bash', command: 'hc run --bg --cwd D:/work/example-app codex "補測試"' })
+  // Windows 上用完整路徑加引號呼叫
+  await $.tool.call({ tool: 'Bash', command: '"C:\\Users\\user\\AppData\\Local\\Programs\\herdr-core\\hc.exe" keys t3 enter' })
+  // 自己不算
+  await $.tool.call({ tool: 'Bash', command: 'hc read t4 --lines 20' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'tab-herdr' })
+  expect(await ui.find({ type: 'Text', text: '這個 session 指揮的（3）' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /送按鍵「enter」/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /reviewer（codex） t7 · blocked/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /派工作「幫我審 diff」/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /t8 · 已結束或不是 agent pane/ })).toBeDefined()
+  // 同一個 space 只有 t9：t5 沒回報狀態不是 agent、t6 在別的 space
+  expect(await ui.find({ type: 'Text', text: /同工作區的其他 agent（1）/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /antigravity t9 · working/ })).toBeDefined()
+  await ui.unmount()
+  expect(herdr.argv.some((a) => a.join(' ') === 'hc ls --json')).toBe(true)
+  expect(herdr.argv.some((a) => a[0] === HERDR_BIN || a[0] === 'herdr')).toBe(false)
   expect(calls.toasts).toEqual([])
 })
 
@@ -712,6 +764,35 @@ test('子頁裡可以回覆 lane、送按鍵，報告是再下一層，返回回
   expect(await ui.find({ key: 'report-ops' })).toBeDefined()
   await ui.press({ key: 'nav-back' })
   expect(await ui.find({ type: 'Text', text: /任務 › ops$/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('herdr App 裡的 lane 子頁：即時畫面用 hc read、回覆用 hc send、按鍵用 hc keys', async ($, on) => {
+  const { herdr } = setup(on, {
+    hc: true,
+    projectSettings: LANE_SETTINGS,
+    lanes: { ops: { ...LANES.ops, pane: 't7' } },
+  })
+  await start($)
+  await $.command.run({ command: 'tendr', args: '' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'task-ops' })
+  expect(await ui.find({ type: 'Text', text: '● 正在跑測試' })).toBeDefined()
+  expect(herdr.argv.some((a) => a.join(' ') === 'hc read t7 --lines 60')).toBe(true)
+  await ui.input({ key: 'lane-reply', text: '可以刪' })
+  expect(herdr.argv.some((a) => a.join(' ') === 'hc send t7 可以刪')).toBe(true)
+  await ui.press({ key: 'lane-key-1' })
+  expect(herdr.argv.some((a) => a.join(' ') === 'hc keys t7 1')).toBe(true)
+  await ui.unmount()
+})
+
+test('herdr App 回報 blocked 時，進行中的 lane 也列到需要處理', async ($, on) => {
+  setup(on, { hc: true, projectSettings: LANE_SETTINGS, lanes: { signup: { ...LANES.signup, pane: 't7' } } })
+  await start($)
+  await $.command.run({ command: 'tendr', args: '' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: '需要處理 1' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /└ 對話框等確認/ })).toBeDefined()
   await ui.unmount()
 })
 

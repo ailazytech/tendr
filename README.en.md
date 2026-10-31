@@ -65,12 +65,12 @@ claude plugin install tendr@tendr
 ### Tabs
 
 - **Tasks** — only when the project sets `tasks_dir` (see "Lane status files"): one or two lines per lane plus a percentage. Lanes that need you (blocked, failed, review, dialog awaiting confirmation) come first; idle and done lanes are collapsed.
-  - Click a lane to open its page: steps, decisions waiting on you, notes, live screen (`herdr pane read`, refreshed every 3 s), keys (Enter / Esc / 1 / 2 / 3), a reply box (`herdr agent prompt`), the report, and memories for that lane.
+  - Click a lane to open its page: steps, decisions waiting on you, notes, live screen (`herdr pane read`, or `hc read` in the herdr app, refreshed every 3 s), keys (Enter / Esc / 1 / 2 / 3), a reply box (`herdr agent prompt`, or `hc send` in the app), the report, and memories for that lane.
   - The report is one level deeper; "← Back" walks up one level at a time and restores the list scroll position.
   - Toasts when another lane becomes blocked, review, or failed.
 - **Memory**: grouped by frontmatter `metadata.layer` into user / project / workstream / phase. Workstream memories attach to a lane page via `metadata.lane`; phase memories past `metadata.review_by` are flagged "due for review". Memories without a layer go under "unlayered", grouped by type.
 - **Progress** (called **Handoff** when the Tasks tab exists): run state, todos, context usage, handoff document.
-- **Herdr** — only inside herdr and when there is no Tasks tab: agents/panes this session has commanded through herdr and their live state; toasts on blocked or done.
+- **Herdr** — only inside herdr or the herdr app, and when there is no Tasks tab: agents/panes this session has commanded through herdr (`hc` in the app) and their live state; toasts on blocked or done.
 - **Footer**: current model, cache countdown, auto-handoff toggle.
 
 ### Auto-handoff flow
@@ -172,7 +172,7 @@ One `<lane>.json` per lane in `tasks_dir`:
 ```
 
 - Required: `lane`, `title` (one line), `state` (`blocked` / `failed` / `review` / `working` / `idle` / `done`), `steps` (`{ id, title, state: todo|doing|done|skip }`), `updated`
-- Optional: `needs` (decision waiting on the user), `pane` (herdr pane id), `spec`, `head`, `report` (report file path), `notes`
+- Optional: `needs` (decision waiting on the user), `pane` (herdr pane id; in the herdr app, a terminal address like `t7` or a name), `spec`, `head`, `report` (report file path), `notes`
 - Percentage = done steps ÷ (total − skipped)
 - Put project-specific rules and validation tooling in that folder's README
 
@@ -271,6 +271,14 @@ Paths are normalized to `/` internally; both platforms run the same code.
 
 - macOS: herdr usually lives in `~/.local/bin/herdr`. Sessions started inside herdr use `HERDR_BIN_PATH` and don't depend on PATH; otherwise make sure `~/.local/bin` is on PATH
 - Windows: `herdr.exe` must be on PATH
+
+### herdr app
+
+Sessions started in a terminal of the herdr desktop app (herdr-core) get the Herdr tab and lane live screens too. The app sets no `HERDR_*`; when tendr sees `HC_TERMINAL_ID` it uses `hc` instead (`hc ls --json`, `hc read`, `hc send`, `hc keys`). `hc` must be on PATH (the app installer adds it).
+
+- The agent list only shows terminals that report status (OSC 7501). hc doesn't recognize agent brands, so programs that don't report (e.g. Claude Code on Windows) aren't listed, but a lane's live screen, replies and keys still work
+- "Same workspace" means the same app space
+- `hc send` / `keys` / `run` / `interrupt` … inside Bash are recorded as targets this session commanded; for `hc run` without `--name`, the returned address is recorded
 
 ## Development
 

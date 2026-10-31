@@ -102,6 +102,12 @@ const I18N = {
       run: '執行指令',
       'send-text': '送文字',
       close: '關閉',
+      // herdr App（hc）
+      send: '派工作',
+      keys: '送按鍵',
+      interrupt: '中斷',
+      kill: '結束',
+      put: '送檔案',
     },
     // 時間
     justNow: '剛剛',
@@ -411,6 +417,12 @@ const I18N = {
       run: 'ran command',
       'send-text': 'sent text',
       close: 'closed',
+      // herdr app (hc)
+      send: 'assigned work',
+      keys: 'sent keys',
+      interrupt: 'interrupted',
+      kill: 'ended',
+      put: 'sent a file',
     },
     justNow: 'just now',
     minutesAgo: (n) => n + ' min ago',
@@ -709,9 +721,13 @@ let usage = null
 let model = ''
 
 // Herdr：這個 session 透過 herdr 指令指揮過的目標，以及 herdr agent list 的即時狀態
+// 兩種環境：herdr（終端機版，HERDR_ENV=1，指令是 herdr）與 herdr App（herdr-core，HC_TERMINAL_ID，指令是 hc）
+// App 的 agent 一律轉成 herdr agent list 的形狀（hcAgents），其餘程式不用分兩套
 let herdrEnv = false
-// herdr 執行檔：herdr 會設 HERDR_BIN_PATH（macOS 上通常是 ~/.local/bin/herdr），不靠 PATH 找
+let herdrKind = '' // 'herdr' | 'hc'
+// herdr 執行檔：herdr 會設 HERDR_BIN_PATH（macOS 上通常是 ~/.local/bin/herdr），不靠 PATH 找；App 的 hc 在 PATH 上
 let herdrBin = 'herdr'
+// 自己的 pane（herdr 是 w1:p2，App 是終端機位址 t4）與所在的 workspace（App 是 space 名稱）
 let herdrSelf = ''
 let herdrWorkspace = ''
 let herdrTargets = {} // target → { target, action, detail, at }
@@ -1020,7 +1036,9 @@ async function refreshScreen($, lane) {
   if (!l?.pane) return
   const at = await $.clock.now()
   try {
-    const r = await $.process.run([herdrBin, 'pane', 'read', l.pane, '--lines', String(SCREEN_ROWS_LONG + 15), '--source', 'recent'], { timeoutMs: 5000 })
+    const rows = String(SCREEN_ROWS_LONG + 15)
+    const argv = herdrKind === 'hc' ? [herdrBin, 'read', l.pane, '--lines', rows] : [herdrBin, 'pane', 'read', l.pane, '--lines', rows, '--source', 'recent']
+    const r = await $.process.run(argv, { timeoutMs: 5000 })
     if (r.exitCode !== 0) throw new Error(r.stderr || 'exit ' + r.exitCode)
     const lines = r.stdout
       .replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, '')
@@ -1039,7 +1057,9 @@ async function refreshScreen($, lane) {
 async function sendToLane($, lane, text) {
   const l = lanes.find((x) => x.lane === lane)
   if (!l?.pane || !String(text).trim()) return
-  const r = await $.process.run([herdrBin, 'agent', 'prompt', l.pane, text], { timeoutMs: 10000 })
+  // 兩邊都會拒絕送給停在對話框的 agent（herdr 回 agent_blocked，hc 不加 --force 不送）
+  const argv = herdrKind === 'hc' ? [herdrBin, 'send', l.pane, text] : [herdrBin, 'agent', 'prompt', l.pane, text]
+  const r = await $.process.run(argv, { timeoutMs: 10000 })
   if (r.exitCode !== 0) {
     $.ui.toast(T.sendFail(clip(r.stderr || r.stdout || 'exit ' + r.exitCode, 60)))
     return
@@ -1052,7 +1072,8 @@ async function sendToLane($, lane, text) {
 async function keyToLane($, lane, key) {
   const l = lanes.find((x) => x.lane === lane)
   if (!l?.pane) return
-  const r = await $.process.run([herdrBin, 'agent', 'send-keys', l.pane, key], { timeoutMs: 5000 })
+  const argv = herdrKind === 'hc' ? [herdrBin, 'keys', l.pane, key] : [herdrBin, 'agent', 'send-keys', l.pane, key]
+  const r = await $.process.run(argv, { timeoutMs: 5000 })
   if (r.exitCode !== 0) $.ui.toast(T.keyFail(clip(r.stderr || 'exit ' + r.exitCode, 60)))
   herdrCommandAt = await $.clock.now()
   $.clock.after(800, () => refreshScreen($, lane))
@@ -1210,12 +1231,73 @@ function parseHerdr(command) {
   return found
 }
 
+// hc（herdr App）會指定終端機的子指令：第一個位置參數是目標（t7、名稱或 machine/t7）
+const HC_TARGETED = ['send', 'keys', 'read', 'wait', 'interrupt', 'get', 'attach', 'kill', 'label', 'keep', 'put']
+
+// 從一段 shell 指令找出 hc 指令的目標（Windows 上可能寫成 hc.exe）。hc run 只有給 --name 時才看得出目標，
+// 沒給的話 target 留空，由 tool.call 從回傳的位址補上
+function parseHc(command) {
+  const found = []
+  for (const segment of String(command).split(/&&|\|\||;|\n/)) {
+    // 前面是開頭、空白、引號或路徑分隔；後面可能有收尾的引號（"C:\...\hc.exe" send t3）
+    const m = segment.match(/(?:^|[\s"'(/\\])hc(?:\.exe)?["']?\s+([\w-]+)(.*)$/)
+    if (!m) continue
+    const [, sub, rest] = m
+    const tokens = [...rest.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map((t) => t[1] ?? t[2] ?? t[3])
+    const positional = []
+    for (let i = 0; i < tokens.length; i++) {
+      if (tokens[i] === '--') break
+      if (tokens[i].startsWith('-')) {
+        if (!/^--(json|bg|keep|force|wait|all|off|outlive-parent|no-notify|children)$/.test(tokens[i])) i++
+        continue
+      }
+      positional.push(tokens[i])
+    }
+    let target
+    let detail = ''
+    if (sub === 'run') {
+      const i = tokens.indexOf('--name')
+      target = i >= 0 ? tokens[i + 1] : undefined
+      const dashes = tokens.indexOf('--')
+      detail = (dashes >= 0 ? tokens.slice(dashes + 1) : positional).join(' ')
+    } else if (HC_TARGETED.includes(sub)) {
+      target = positional[0]
+      if (sub === 'send') detail = positional[1] ?? ''
+      if (sub === 'keys') detail = positional.slice(1).join(' ')
+    }
+    // 跳過變數（例如 $HC_TERMINAL_ID，通常是自己）和沒給目標的指令（互動式挑選）；hc run 例外，見上
+    if (target?.startsWith('$') || (!target && sub !== 'run')) continue
+    found.push({ target, action: sub, detail })
+  }
+  return found
+}
+
+// hc 不給 workspace id：用 where（「space / tab」）的 space 名稱代替
+function hcSpace(terminal) {
+  return String(terminal.where ?? '').split(' / ')[0]
+}
+
+// hc ls --json 的終端機轉成 herdr agent list 的形狀。hc 不認 agent 品牌，只有回報過狀態（OSC 7501）的才算 agent
+function hcAgents(terminals) {
+  return terminals
+    .filter((t) => t.state === 'live' && typeof t.status === 'string')
+    .map((t) => ({ pane_id: t.address, name: t.name ?? undefined, agent: t.agent, agent_status: t.status, workspace_id: hcSpace(t) }))
+}
+
 async function refreshHerdr($) {
   if (!herdrEnv) return
   try {
-    const r = await $.process.run([herdrBin, 'agent', 'list'], { timeoutMs: 5000 })
+    const r = await $.process.run(herdrKind === 'hc' ? [herdrBin, 'ls', '--json'] : [herdrBin, 'agent', 'list'], { timeoutMs: 5000 })
     if (r.exitCode !== 0) throw new Error(r.stderr || 'exit ' + r.exitCode)
-    herdrAgents = JSON.parse(r.stdout)?.result?.agents ?? []
+    if (herdrKind === 'hc') {
+      const terminals = JSON.parse(r.stdout)?.terminals ?? []
+      // 自己通常不是 agent（Claude Code 不回報 OSC 7501），所在的 space 要從完整清單找
+      const self = terminals.find((t) => t.address === herdrSelf)
+      if (self) herdrWorkspace = hcSpace(self)
+      herdrAgents = hcAgents(terminals)
+    } else {
+      herdrAgents = JSON.parse(r.stdout)?.result?.agents ?? []
+    }
     herdrError = ''
   } catch (err) {
     herdrError = T.herdrReadFail(String(err))
@@ -1731,9 +1813,18 @@ export function register(on, options) {
 
     herdrEnv = (await $.env.get('HERDR_ENV')) === '1'
     herdrBin = (await $.env.get('HERDR_BIN_PATH')) || 'herdr'
+    herdrKind = herdrEnv ? 'herdr' : ''
+    // herdr App 的終端機不設 HERDR_*，只有 HC_TERMINAL_ID；兩個都有時（App 裡再開 herdr）以 herdr 為準
+    const hcTerminal = herdrEnv ? '' : (await $.env.get('HC_TERMINAL_ID')) || ''
+    if (hcTerminal) {
+      herdrEnv = true
+      herdrKind = 'hc'
+      herdrBin = 'hc'
+    }
     if (herdrEnv) {
-      herdrSelf = (await $.env.get('HERDR_PANE_ID')) || ''
-      herdrWorkspace = (await $.env.get('HERDR_WORKSPACE_ID')) || ''
+      // App 的 workspace（space 名稱）要等第一次 hc ls 才知道
+      herdrSelf = herdrKind === 'hc' ? hcTerminal : (await $.env.get('HERDR_PANE_ID')) || ''
+      herdrWorkspace = herdrKind === 'hc' ? '' : (await $.env.get('HERDR_WORKSPACE_ID')) || ''
       const savedTargets = await $.store.get('herdr:' + sessionId)
       if (savedTargets && typeof savedTargets === 'object') herdrTargets = savedTargets
       // 先查一次，之後是否繼續查看指揮過的 agent 還在不在忙
@@ -1987,14 +2078,19 @@ export function register(on, options) {
     }
     let result = watchCall(e, await next(e))
     if (hit && result && result.deny === undefined) result = { ...result, context: [...(result.context ?? []), T.guardHead(hit)] }
-    if (herdrEnv && !e.agentId && e.tool === 'Bash' && typeof e.command === 'string' && /\bherdr/.test(e.command)) {
+    const commandPattern = herdrKind === 'hc' ? /(?:^|[\s"'(/\\])hc(?:\.exe)?["']?\s/ : /\bherdr/
+    if (herdrEnv && !e.agentId && e.tool === 'Bash' && typeof e.command === 'string' && commandPattern.test(e.command)) {
       const now = await $.clock.now()
-      const found = parseHerdr(e.command)
+      const parsed = herdrKind === 'hc' ? parseHc(e.command) : parseHerdr(e.command)
       // pane split 建立的新 pane 從回傳的 JSON 讀 pane_id
-      if (/\bherdr(?:\.exe)?\s+pane\s+split\b/.test(e.command)) {
+      if (herdrKind === 'herdr' && /\bherdr(?:\.exe)?\s+pane\s+split\b/.test(e.command)) {
         const m = JSON.stringify(result ?? '').match(/\\?"pane_id\\?"\s*:\s*\\?"(\w+:p\w+)/)
-        if (m) found.push({ target: m[1], action: 'split', detail: '' })
+        if (m) parsed.push({ target: m[1], action: 'split', detail: '' })
       }
+      // hc run 沒給 --name：新終端機的位址從回傳的 JSON 讀
+      const run = parsed.find((f) => f.action === 'run' && !f.target)
+      if (run) run.target = JSON.stringify(result ?? '').match(/\\?"address\\?"\s*:\s*\\?"([\w/]+)/)?.[1]
+      const found = parsed.filter((f) => f.target)
       for (const f of found) {
         if (f.target === herdrSelf) continue
         herdrTargets = { ...herdrTargets, [f.target]: { ...f, detail: clip(f.detail, 120), at: now } }
@@ -2324,7 +2420,8 @@ export function register(on, options) {
       const others = herdrAgents.filter((a) => a.workspace_id === herdrWorkspace && a.pane_id !== herdrSelf && !tracked.has(a.pane_id))
       if (others.length) {
         rows.push(blank(), line([T.otherAgents(others.length)], { dimColor: true }))
-        for (const a of others) rows.push(longLine('  ' + (LANE_LOOK[a.agent_status === 'working' ? 'working' : a.agent_status === 'blocked' ? 'blocked' : 'idle'][0]) + ' ' + (a.name || a.pane_id) + ' · ' + (a.terminal_title_stripped || a.agent), { dimColor: true }))
+        const look = (s) => (s === 'working' || s === 'blocked' ? s : s === 'error' ? 'failed' : 'idle')
+        for (const a of others) rows.push(longLine('  ' + LANE_LOOK[look(a.agent_status)][0] + ' ' + (a.name || a.pane_id) + ' · ' + (a.terminal_title_stripped || a.agent), { dimColor: true }))
       }
       return rows
     }
@@ -2440,6 +2537,8 @@ export function register(on, options) {
       done: ['✔', 'green'],
       idle: ['○', undefined],
       unknown: ['?', undefined],
+      // 只有 herdr App（hc）會回報 error
+      error: ['✖', 'red'],
     }
     const agentRow = (key, a, extra) => {
       const [icon, color] = a ? HERDR_ICONS[a.agent_status] ?? ['?', undefined] : ['✕', undefined]
