@@ -50,6 +50,8 @@ function cacheOf(s, t, now) {
 function phaseOf(s) {
   if (s.phase === "handoff") return "交接中…（寫狀態檔與記憶）";
   if (s.phase === "compacting") return "壓縮中…";
+  // lead：看板指定的主控，或在 Claude Code 裡打過 /tendr
+  if (!s.lead) return "不是主控，不會自動交接";
   if (!s.auto) return "自動交接已關（外掛看板可打開）";
   if (s.cacheTtl !== "1h") return `快取 ${s.cacheTtl}，不自動交接`;
   if (!s.armed) return "已交接，等新指示";
@@ -62,11 +64,42 @@ function paneOfTerminal(terminal) {
   return panes().find((p) => p.terminal === terminal || p.terminal?.endsWith("/" + terminal)) ?? null;
 }
 
-// 終端機在哪個分頁：給人看的名字
+// 終端機在哪個 space／分頁：給人看的名字。分頁常常都叫「Claude Code」，只寫分頁名分不出是哪一格
 function terminalLabel(terminal) {
   const p = paneOfTerminal(terminal);
-  const tab = p ? spaces().flatMap((sp) => sp.tabs ?? []).find((x) => x.id === p.tab) : null;
-  return terminal + (tab?.name ? " · " + tab.name : "");
+  if (!p) return terminal;
+  for (const sp of spaces()) {
+    const tab = (sp.tabs ?? []).find((x) => x.id === p.tab);
+    if (tab) return `${terminal} · ${sp.name} / ${tab.name}`;
+  }
+  return terminal;
+}
+
+// 現在選著的終端機（點左邊的 agent 清單或點 pane 都會換）
+function focusedTerminal() {
+  const f = focused();
+  return f?.terminal ?? f?.agent ?? null;
+}
+
+// 選著的終端機裡是不是 agent：是的話看板用它回報的專案資料夾（終端機的 cwd 可能早就換了）
+function focusedAgent() {
+  const here = focusedTerminal();
+  const p = here ? paneOfTerminal(here) : null;
+  return p && (p.status || p.program?.agent) ? here : null;
+}
+
+// 交接區塊要講的是哪個 Claude：選著的那格；不是 Claude 的話找同一個分頁、同一個 space 的
+function nearestSession(sessions) {
+  const f = focused();
+  const here = focusedTerminal();
+  const exact = sessions.find((s) => s.terminal === here);
+  if (exact) return exact;
+  const tabOf = (s) => paneOfTerminal(s.terminal)?.tab;
+  const inTab = sessions.find((s) => tabOf(s) && tabOf(s) === f?.tab);
+  if (inTab) return inTab;
+  const space = spaces().find((sp) => sp.id === f?.space);
+  const tabs = new Set((space?.tabs ?? []).map((x) => x.id));
+  return sessions.find((s) => tabs.has(tabOf(s))) ?? null;
 }
 
 // lane 對應的終端機（pane 欄位是 hc 位址或名稱）在 App 裡的即時狀態
@@ -86,10 +119,10 @@ function standing(l) {
   return "已驗收";
 }
 
-// 目前在哪個 space 的哪個分頁：變了就該換專案
+// 目前在哪個 space 的哪個分頁、選著哪個終端機：變了就該換專案
 function whereNow() {
   const f = focused();
-  return (f?.space ?? "") + "/" + (f?.tab ?? "");
+  return (f?.space ?? "") + "/" + (f?.tab ?? "") + "/" + (focusedTerminal() ?? "");
 }
 
 // App 只知道終端機的資料夾：依序給 focused、同一個分頁、同一個 space 的，board-data 挑第一個有 tendr 設定的
@@ -136,7 +169,7 @@ export default class TendrBoard extends View {
       const where = whereNow();
       if (where === this.where) {
         // 快取倒數每秒走（只有列表上看得到）
-        if (!this.route && this.leadSession()?.lastRequestAt) cx.notify();
+        if (!this.route && (this.data?.sessions ?? []).some((s) => s.lastRequestAt)) cx.notify();
         return;
       }
       this.where = where;
@@ -169,7 +202,8 @@ export default class TendrBoard extends View {
     const seq = ++this.loadSeq;
     cx.spawn(async (cx) => {
       try {
-        const r = await exec(NODE, [DATA_SCRIPT, ...candidates()]);
+        const agent = focusedAgent();
+        const r = await exec(NODE, [DATA_SCRIPT, ...(agent ? ["--focus", agent] : []), ...candidates()]);
         if (seq !== this.loadSeq) return;
         if (r.code !== 0) throw new Error(r.stderr || "exit " + r.code);
         const data = JSON.parse(r.stdout);
@@ -238,57 +272,73 @@ export default class TendrBoard extends View {
     this.act(["--handoff", s.terminal], `已請 ${s.terminal} 交接：寫完狀態檔與記憶後壓縮`, cx);
   }
 
-  // 列表最上面：主控、快取倒數、交接狀態、立即交接；沒有主控時列出這個專案的 Claude 讓人挑
+  // 列表最上面的「交接」：講的是選著的那格 Claude，「立即交接」只送給它；
+  // 主控在別格時另外列一行（寫出 space），同一個資料夾還有別的 Claude 時收在「其他」裡讓人挑主控
   leadView(t, now) {
     const d = this.data;
     const sessions = d?.sessions ?? [];
     const leadTerminal = d?.lead?.terminal;
-    const s = this.leadSession();
+    const lead = this.leadSession();
+    const here = nearestSession(sessions) ?? lead;
     const rows = [div().px(10).pt(10).pb(2).text_size(11).text_color(t.dim).child("交接")];
     const button = (id, label, on, solid) => div().id(id).px(8).py(2).rounded(4)
       .bg(solid ? t.solid : t.raised).text_color(solid ? t.solid_foreground : t.muted).hover((x) => x.bg(solid ? t.solid : t.hover))
       .text_size(11.5).on_click((_e, cx) => on(cx)).child(label);
+    const link = (id, label, on) => div().id(id).text_size(11).text_color(t.dim).hover((x) => x.text_color(t.foreground))
+      .on_click((_e, cx) => on(cx)).child(label);
     const pick = (x) => h_flex().id("pick-" + x.terminal).px(10).py(3).gap(6).items_center()
       .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(paneOfTerminal(x.terminal) ? t.muted : t.dim)
         .child(terminalLabel(x.terminal) + " · " + cacheOf(x, t, now).text))
       .child(button("lead-" + x.terminal, "設為主控", (cx) => this.setLead(x, cx)));
 
-    if (!leadTerminal) {
-      rows.push(div().px(10).text_size(11.5).text_color(t.ansi3).child("還沒指定主控：快取快過期時不會自動交接"));
-      if (!sessions.length) rows.push(div().px(10).pt(2).text_size(11).text_color(t.dim).child("這個專案的 Claude 還沒回報（tendr 0.12 以上，重開 Claude Code 後出現）"));
-      rows.push(...sessions.map(pick));
+    if (!here) {
+      rows.push(div().px(10).text_size(11.5).text_color(leadTerminal ? t.muted : t.ansi3)
+        .child(leadTerminal ? "主控 " + terminalLabel(leadTerminal) + "（還沒回報）" : "還沒指定主控：快取快過期時不會自動交接"));
+      rows.push(div().px(10).pt(2).text_size(11).text_color(t.dim).child("這個專案的 Claude 還沒回報（tendr 0.12 以上，重開 Claude Code 後出現）"));
       return rows;
     }
 
-    const alive = Boolean(paneOfTerminal(leadTerminal));
+    const isLead = here.terminal === leadTerminal;
+    const alive = Boolean(paneOfTerminal(here.terminal));
     rows.push(h_flex().px(10).gap(6).items_center()
-      .child(div().text_color(t.ansi4 ?? t.foreground).child("★"))
+      .child(div().text_color(isLead ? t.ansi4 ?? t.foreground : t.dim).child(isLead ? "★" : "●"))
       .child(div().flex_1().min_w(0).truncate().text_color(alive ? t.foreground : t.dim)
-        .child("主控 " + terminalLabel(leadTerminal) + (alive ? "" : "（不在視窗裡）")))
-      .child(s && s.phase === "idle" ? button("handoff-now", "立即交接", (cx) => this.handoffNow(s, cx), true) : div()));
-    if (!s) {
-      rows.push(div().px(10).pt(2).text_size(11).text_color(t.dim).child("這個終端機的 Claude 還沒回報；重開 Claude Code 後出現"));
-    } else {
-      const c = cacheOf(s, t, now);
-      const bar = div().w(64).h(6).rounded(3).bg(t.border).child(div().h_full().w(Math.round(64 * c.frac)).rounded(3).bg(c.tone));
-      rows.push(h_flex().px(10).pt(4).gap(6).items_center()
-        .child(bar)
-        .child(div().text_size(11.5).text_color(c.tone).child(c.text))
-        .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(s.phase === "idle" ? t.dim : t.ansi3).child("· " + phaseOf(s))));
-      if (s.lastRequestAt && s.contextPercent < (s.minContextPercent ?? 20) && s.phase === "idle")
-        rows.push(div().px(10).text_size(11).text_color(t.dim).child(`上下文只有 ${s.contextPercent}%，到時會略過自動交接`));
-      if (s.note) rows.push(div().px(10).text_size(11).text_color(t.dim).truncate().child(String(s.note)));
-    }
-    const others = sessions.filter((x) => x.terminal !== leadTerminal);
+        .child((isLead ? "主控 " : "") + terminalLabel(here.terminal) + (alive ? "" : "（不在視窗裡）")))
+      .child(here.phase === "idle" ? button("handoff-now", "立即交接", (cx) => this.handoffNow(here, cx), true) : div()));
+    const c = cacheOf(here, t, now);
+    const bar = div().w(64).h(6).rounded(3).bg(t.border).child(div().h_full().w(Math.round(64 * c.frac)).rounded(3).bg(c.tone));
+    rows.push(h_flex().px(10).pt(4).gap(6).items_center()
+      .child(bar)
+      .child(div().text_size(11.5).text_color(c.tone).child(c.text))
+      .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(here.phase === "idle" ? t.dim : t.ansi3).child("· " + phaseOf(here))));
+    // 交接會寫到哪裡：同一個資料夾開的 Claude 共用 lane 資料夾與記憶，要讓人看得出來
+    const shared = sessions.filter((x) => x.terminal !== here.terminal && paneOfTerminal(x.terminal));
+    const laneText = !d.tasksDir || here.lane === undefined ? "" : here.lane ? `狀態檔 ${here.lane}.json` : "還沒有自己的 lane（交接時新增）";
+    rows.push(div().px(10).pt(2).text_size(11).text_color(t.dim).truncate()
+      .child([here.root, laneText].filter(Boolean).join(" · ")));
+    if (shared.length)
+      rows.push(div().px(10).text_size(11).text_color(t.ansi3)
+        .child(`和 ${shared.map((x) => x.terminal).join("、")} 在同一個資料夾：lane 資料夾、記憶、交接文件都共用。不同專案的工作請在各自的資料夾開 Claude`));
+    if (here.lastRequestAt && here.contextPercent < (here.minContextPercent ?? 20) && here.phase === "idle" && here.lead)
+      rows.push(div().px(10).text_size(11).text_color(t.dim).child(`上下文只有 ${here.contextPercent}%，到時會略過自動交接`));
+    if (here.note) rows.push(div().px(10).text_size(11).text_color(t.dim).truncate().child(String(here.note)));
+
+    // 主控在別格
+    if (leadTerminal && !isLead)
+      rows.push(h_flex().px(10).pt(6).gap(6).items_center()
+        .child(div().text_color(t.ansi4 ?? t.foreground).child("★"))
+        .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted)
+          .child("主控是 " + terminalLabel(leadTerminal) + (lead ? " · " + cacheOf(lead, t, now).text : "（還沒回報）"))));
+    if (!leadTerminal)
+      rows.push(div().px(10).pt(4).text_size(11.5).text_color(t.ansi3).child("這個專案還沒指定主控：快取快過期時不會自動交接"));
+
+    const others = sessions.filter((x) => x.terminal !== here.terminal && x.terminal !== leadTerminal);
     rows.push(h_flex().px(10).pt(4).gap(10).items_center()
+      .child(isLead ? link("clear-lead", "取消主控", (cx) => this.clearLead(cx)) : link("lead-here", "設這格為主控", (cx) => this.setLead(here, cx)))
       .child(others.length
-        ? div().id("toggle-lead").text_size(11).text_color(t.dim).hover((x) => x.text_color(t.foreground))
-          .on_click((_e, cx) => { this.leadOpen = !this.leadOpen; cx.notify(); })
-          .child(`${this.leadOpen ? "▾" : "▸"} 換主控（還有 ${others.length} 個 Claude）`)
+        ? link("toggle-lead", `${this.leadOpen ? "▾" : "▸"} 其他 ${others.length} 個 Claude`, (cx) => { this.leadOpen = !this.leadOpen; cx.notify(); })
         : div())
-      .child(div().flex_1())
-      .child(div().id("clear-lead").text_size(11).text_color(t.dim).hover((x) => x.text_color(t.foreground))
-        .on_click((_e, cx) => this.clearLead(cx)).child("取消主控")));
+      .child(div().flex_1()));
     if (this.leadOpen) rows.push(...others.map(pick));
     return rows;
   }

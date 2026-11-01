@@ -568,6 +568,49 @@ test('herdr App：交接狀態跟著快取更新，自己離開時標成已結�
   expect(JSON.parse(files.get(SESSION_FILE) ?? '{}').ended).toBe('prompt_input_exit')
 })
 
+test('herdr App：同一個資料夾的主控是別的終端機時，不叫自己覆寫主控的狀態檔', async ($, on) => {
+  const { clock, calls, files } = setup(on, { hc: true, projectSettings: LANE_SETTINGS, lanes: LANES })
+  files.set(LEAD_FILE, JSON.stringify({ [KEY]: { terminal: 't9' } }))
+  await start($)
+  await $.prompt.submit({ text: '繼續', origin: { kind: 'composer' }, wait: false })
+  const brief = calls.contexts[0][0]
+  expect(brief).toContain('主控是終端機 t9')
+  expect(brief).toContain('pane 填 t4')
+  expect(brief).not.toContain('你自己的是 architect.json')
+  // architect 的步驟不是自己的，不列成「你自己的步驟」
+  expect(brief).not.toContain('你自己的步驟')
+  await clock.advance(1000)
+  expect(JSON.parse(files.get(SESSION_FILE) ?? '{}').lane).toBe('')
+  // 看板按「立即交接」：寫自己的 lane，不動 architect.json
+  files.set(REQUEST_FILE, JSON.stringify({ action: 'handoff', at: START + 1000 }))
+  await clock.advance(2000)
+  expect(calls.submits.length).toBe(1)
+  expect(calls.submits[0]).toContain('`architect.json` 是它的狀態檔，不要動')
+  expect(calls.submits[0]).toContain('"pane": "t4"')
+  expect(calls.submits[0]).not.toContain('覆寫你自己的狀態檔')
+})
+
+test('herdr App：主控是自己、沒有自己 pane 的 lane 時照舊用 tasks_self', async ($, on) => {
+  const { clock, files } = setup(on, { hc: true, projectSettings: LANE_SETTINGS, lanes: LANES })
+  files.set(LEAD_FILE, JSON.stringify({ [KEY]: { terminal: 't4' } }))
+  await start($)
+  await clock.advance(1000)
+  expect(JSON.parse(files.get(SESSION_FILE) ?? '{}').lane).toBe('architect')
+})
+
+test('herdr App：pane 是自己終端機的 lane 就是自己的', async ($, on) => {
+  const mine = { lane: 'canvas', title: '規格畫布', pane: 't4', state: 'working', steps: [{ id: 'C1', title: '匯入 Excel', state: 'doing' }], updated: UPDATED }
+  const { clock, calls, files } = setup(on, { hc: true, projectSettings: LANE_SETTINGS, lanes: { ...LANES, canvas: mine } })
+  files.set(LEAD_FILE, JSON.stringify({ [KEY]: { terminal: 't9' } }))
+  await start($)
+  await $.prompt.submit({ text: '繼續', origin: { kind: 'composer' }, wait: false })
+  expect(calls.contexts[0][0]).toContain('你自己的是 canvas.json')
+  expect(calls.contexts[0][0]).toContain('◐ C1 匯入 Excel')
+  files.set(REQUEST_FILE, JSON.stringify({ action: 'handoff', at: START + 1000 }))
+  await clock.advance(2000)
+  expect(calls.submits[0]).toContain(ROOT + '/docs/lanes/status/canvas.json')
+})
+
 test('自動交接開關會存起來', async ($, on) => {
   const { saved } = setup(on)
   await start($)

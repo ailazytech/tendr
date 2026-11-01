@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // herdr App 的 tendr 看板（app/mod/main.js）要的資料：用法 node board-data.mjs <專案根目錄> [其他候選...]
+//   node board-data.mjs --focus <終端機> [候選...]   選著的 agent 有回報時用它的專案資料夾，不看候選
 // 從候選資料夾挑第一個有 tendr 專案設定的（App 只知道終端機的 cwd，不知道哪個是 Claude Code 的專案根目錄），
 // 讀 lane 狀態檔、交接文件、記憶、主控與各 Claude 的交接狀態，印出 JSON。路徑規則與 hooks/register.js 的 expandPath 相同
 //
@@ -159,8 +160,16 @@ if (args[0] === '--handoff') {
   process.exit(0)
 }
 
+// --focus <終端機>：看板選著的 agent。它的 Claude 有回報時就用它自己的專案資料夾——
+// 終端機的 cwd 可能早就換了，而且不能退回去挑「旁邊那格有 tendr 設定的」，那會變成別人的專案、別人的主控
+let focusSession = null
+if (args[0] === '--focus') {
+  const s = readJson(SESSIONS_DIR + '/' + terminalName(args[1] ?? '') + '.json')
+  if (s && !s.ended && typeof s.root === 'string' && s.root && Date.now() - Date.parse(s.updated) < SESSION_MAX_AGE) focusSession = s
+  args.splice(0, 2)
+}
 const candidates = args.filter(Boolean)
-const root = candidates.find((c) => projectSettings(c)) ?? candidates[0] ?? ''
+const root = focusSession ? focusSession.root : (candidates.find((c) => projectSettings(c)) ?? candidates[0] ?? '')
 const found = root ? projectSettings(root) : null
 const settings = found?.settings ?? {}
 const pick = (key, fallback) => (typeof settings[key] === 'string' && settings[key].trim() ? settings[key] : fallback)

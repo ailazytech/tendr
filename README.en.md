@@ -150,7 +150,7 @@ Put overrides in `{config}/projects/{project}/tendr.json` (outside the project r
 - `handoff_section`: use when the handoff document is one of the project's own docs. The board and new sessions read only the first section whose heading starts with this; auto-handoff only asks Claude to update that section, never rewrite the whole file
 - `compact_path`: where the compaction summary goes. Defaults to next to the global `handoff_path`, so switching to a project doc doesn't write summaries into the repo
 - `tasks_dir`: lane status folder; enables the Tasks tab
-- `tasks_self`: the lead session's own status file name (default `architect`)
+- `tasks_self`: the lead session's own status file name (default `architect`). A lane whose `pane` is a session's own terminal belongs to that session; in the herdr app, when the folder's lead is another terminal, other Claude sessions aren't told to overwrite `tasks_self` but to add their own lane (with `pane` set to themselves)
 - `sync_command`: a command that syncs the lanes, as an array (executable first); `{tasks_dir}` becomes the lane folder. It always runs before compaction (auto-handoff or manual `/compact`), with a toast on success or failure; it also runs at the end of a lead-session turn when the lane files (names or modification times) differ from the last sync, toasting only on failure. It never blocks compaction. For example, syncing lanes into ZJNote: `"sync_command": ["/Applications/…/zjnote-mcp", "pm-sync", "{tasks_dir}", "--project", "Website"]`
 
 ### Lane status files
@@ -298,10 +298,12 @@ node app/install.mjs --layout my-main   # use your layout's name
 
 #### Lead session and auto-handoff (app)
 
-In the app you usually look at the tendr board on the right and never type `/tendr` in Claude, so the lead is picked on the board. The "交接" (handoff) block at the top of the list:
+In the app you usually look at the tendr board on the right and never type `/tendr` in Claude, so the lead is picked on the board. The "交接" (handoff) block at the top of the list is about **the Claude you have selected** (whichever you click in the agent list on the left; if the selection isn't a Claude, one in the same tab, then the same space):
 
-- **No lead yet**: lists the Claude sessions running in this project (terminal address, tab name, time left on the cache), each with "設為主控" (make lead). Other sessions don't hand off automatically, so they can't overwrite the lead's status file
-- **Lead picked**: ★ the lead, a cache countdown bar (green → yellow at 10 min → red at 5 min, seconds under 10 min), what it's doing (hands off at 5 min / handing off (writing status file and memory) / compacting / handed off, waiting for input) and a "立即交接" (hand off now) button; "換主控" (change lead) and "取消主控" (clear lead) below
+- Its terminal address and "space / tab" name (tabs are often all called Claude Code, so the tab name alone doesn't say which one), a cache countdown bar (green → yellow at 10 min → red at 5 min, seconds under 10 min), what it's doing (hands off at 5 min / not the lead, won't hand off automatically / handing off (writing status file and memory) / compacting / handed off, waiting for input) and a "立即交接" (hand off now) button that goes to this one only
+- Below it, its project folder and status file; when other Claude sessions run in the same folder, a yellow note says the lane folder, memory and handoff document are shared, and that work on different projects should start Claude in each project's own folder
+- When the lead is another terminal, a separate "★ 主控是 t16 · space / tab" line shows it with its countdown; with no lead, a note says nothing will hand off automatically. "設這格為主控" (make this the lead), "取消主控" (clear lead) and "其他 N 個 Claude" (other sessions, each can be made lead) are at the bottom
+- The board uses the project folder the selected Claude reported (`~/.tendr/sessions`), not the terminal's current cwd: the cwd may have changed, and a neighbouring pane's folder may be another project with another lead
 - The lead is stored in `~/.tendr/lead.json` (`{ project key: { terminal } }`, the key being the session root with non-alphanumerics replaced by `-`, lowercased), per terminal, so it survives app restarts and resumed conversations. The plugin sees changes within 5 s
 - Conditions and steps are those of "Auto-handoff flow" above (`1h` cache, context at least 20%, within `away_hours`): with 5 minutes left, Claude is asked to update its own lane status file (or the handoff document) and memory, then the conversation is compacted
 - Each Claude writes its cache countdown and handoff state to `~/.tendr/sessions/<terminal>.json` (only on change); the board reads it every 10 s, every 3 s during a handoff. "Hand off now" writes `~/.tendr/requests/<terminal>.json`; the plugin picks it up within 2 s and marks it `done`, ignoring requests older than 2 minutes

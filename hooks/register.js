@@ -240,7 +240,9 @@ const I18N = {
     // 給 Claude 的說明（使用者看不到）
     laneBriefing: (c) => [
       '[tendr] 這個專案用 lane 狀態檔交接：',
-      '- 任務狀態：' + c.tasksDir + '/<lane>.json，一條 lane 一個；你自己的是 ' + c.selfLane + '.json。格式與更新規則見該資料夾的 README。',
+      c.selfLane
+        ? '- 任務狀態：' + c.tasksDir + '/<lane>.json，一條 lane 一個；你自己的是 ' + c.selfLane + '.json。格式與更新規則見該資料夾的 README。'
+        : '- 任務狀態：' + c.tasksDir + '/<lane>.json，一條 lane 一個。這個資料夾的主控是終端機 ' + c.leadTerminal + '，' + c.configuredSelf + '.json 是它的，不要改；你（' + c.terminal + '）還沒有自己的 lane，交接時新增一條代表你這份工作的，pane 填 ' + c.terminal + '。格式與更新規則見該資料夾的 README。',
       '- 詳細交接：' + c.handoffFile + (c.handoffSection ? ' 的「' + c.handoffSection + '」一節' : '') + '，需要細節時再讀。',
       '- 記憶：' + c.memoryDir + '（frontmatter 的 metadata.layer 分成 user／project／workstream／phase）',
       '- 主控 session 的提示快取快過期時，會要求你更新自己的狀態檔，接著自動壓縮對話。',
@@ -263,13 +265,16 @@ const I18N = {
       '  建法：在 ' +
         c.projectSettingsFile +
         ' 寫 {"tasks_dir": "<資料夾>"}，資料夾裡每條 lane 一個 <lane>.json：lane、title（一行）、state（blocked／failed／review／working／idle／done）、steps（{ id, title, state: todo|doing|done|skip }）、updated，選填 needs、pane、spec、head、report、notes；主控自己那條叫 ' +
-        c.selfLane +
+        c.configuredSelf +
         '.json。',
     ],
     briefingHandoff: '以下是目前的交接文件，請據此接續先前的工作；若和使用者這次的要求無關，可以忽略。',
     handoffHead: (min) => '提示快取約 ' + min + ' 分鐘後過期，接下來會自動壓縮對話。請立刻：',
     handoffLane: (c) => [
-      '1. 覆寫你自己的狀態檔 `' + c.tasksDir + '/' + c.selfLane + '.json`：steps 的狀態照實更新；要使用者決定的事寫 needs；接手需要知道、但不屬於任何步驟的事寫 notes（最多 8 則，一行一則）。依該資料夾 README 的規則驗證，並更新它說要產生的總覽。',
+      (c.selfLane
+        ? '1. 覆寫你自己的狀態檔 `' + c.tasksDir + '/' + c.selfLane + '.json`：'
+        : '1. 這個資料夾的主控是終端機 ' + c.leadTerminal + '，`' + c.configuredSelf + '.json` 是它的狀態檔，不要動。把你這份工作寫成自己的狀態檔 `' + c.tasksDir + '/<lane>.json`（lane 取英數小寫的短名；已經有代表這份工作的 lane 就更新那一條），並填上 "pane": "' + c.terminal + '"：') +
+        'steps 的狀態照實更新；要使用者決定的事寫 needs；接手需要知道、但不屬於任何步驟的事寫 notes（最多 8 則，一行一則）。依該資料夾 README 的規則驗證，並更新它說要產生的總覽。',
       '2. 你驗收過或確認過狀態改變的 lane，也更新它們的狀態檔。',
       '3. 若有值得長期保存的使用者叮囑或專案事實，順手更新記憶（`' + c.memoryDir + '`，標上 metadata.layer）。',
       '4. 不要開始新的工作。寫完用一兩句回報即可。',
@@ -545,7 +550,9 @@ const I18N = {
     count: (label, n) => label + ' (' + n + ')',
     laneBriefing: (c) => [
       '[tendr] This project hands off through lane status files:',
-      '- Lane status: ' + c.tasksDir + '/<lane>.json, one per lane; yours is ' + c.selfLane + '.json. Format and update rules are in that folder\'s README.',
+      c.selfLane
+        ? '- Lane status: ' + c.tasksDir + '/<lane>.json, one per lane; yours is ' + c.selfLane + '.json. Format and update rules are in that folder\'s README.'
+        : '- Lane status: ' + c.tasksDir + '/<lane>.json, one per lane. The lead of this folder is terminal ' + c.leadTerminal + ' and ' + c.configuredSelf + '.json is its file; don\'t change it. You (' + c.terminal + ') have no lane yet: at handoff, add one for your own work with pane set to ' + c.terminal + '. Format and update rules are in that folder\'s README.',
       '- Detailed handoff: ' + c.handoffFile + (c.handoffSection ? ', section "' + c.handoffSection + '"' : '') + '; read it when you need details.',
       '- Memory: ' + c.memoryDir + ' (frontmatter metadata.layer: user / project / workstream / phase)',
       "- When the lead session's prompt cache is about to expire, you'll be asked to update your own status file, then the conversation is compacted automatically.",
@@ -568,13 +575,16 @@ const I18N = {
       '  How: write {"tasks_dir": "<folder>"} to ' +
         c.projectSettingsFile +
         '; in that folder, one <lane>.json per lane: lane, title (one line), state (blocked / failed / review / working / idle / done), steps ({ id, title, state: todo|doing|done|skip }), updated; optional needs, pane, spec, head, report, notes. The lead\'s own file is ' +
-        c.selfLane +
+        c.configuredSelf +
         '.json.',
     ],
     briefingHandoff: "Below is the current handoff document; continue the earlier work from it. Ignore it if unrelated to the user's request.",
     handoffHead: (min) => 'The prompt cache expires in about ' + min + ' min, and the conversation will be compacted right after. Now:',
     handoffLane: (c) => [
-      '1. Overwrite your own status file `' + c.tasksDir + '/' + c.selfLane + '.json`: update step states truthfully; put decisions for the user in needs; put anything the next session must know that is not a step in notes (at most 8, one line each). Validate it per that folder\'s README and update any overview it says to generate.',
+      (c.selfLane
+        ? '1. Overwrite your own status file `' + c.tasksDir + '/' + c.selfLane + '.json`: '
+        : '1. The lead of this folder is terminal ' + c.leadTerminal + ' and `' + c.configuredSelf + '.json` is its status file; leave it alone. Write your own work to your own status file `' + c.tasksDir + '/<lane>.json` (a short lowercase name; if a lane for this work already exists, update that one) with "pane": "' + c.terminal + '": ') +
+        'update step states truthfully; put decisions for the user in needs; put anything the next session must know that is not a step in notes (at most 8, one line each). Validate it per that folder\'s README and update any overview it says to generate.',
       '2. Also update the status files of lanes you accepted or whose state change you confirmed.',
       '3. If there are user instructions or project facts worth keeping long-term, update memory (`' + c.memoryDir + '`, with metadata.layer).',
       "4. Don't start new work. Reply with one or two sentences when done.",
@@ -760,6 +770,9 @@ let tasks = {}
 
 // lane 狀態檔
 let tasksDir = ''
+// 專案設定的 tasks_self（主控自己那條 lane 的名稱）
+let configuredSelf = 'architect'
+// 這個 session 自己的 lane（見 pickSelfLane）；空字串＝還沒有（同一個資料夾的主控是別的終端機）
 let selfLane = 'architect'
 // 同步指令（專案覆寫檔的 sync_command，argv 陣列；{tasks_dir} 換成 lane 資料夾）：壓縮對話前一定跑，每輪結束時 lane 檔有變也跑
 let syncCommand = []
@@ -812,6 +825,8 @@ let auto = true
 let activated = false
 // herdr App 裡被 tendr 看板指定為這個專案的主控（見 LEAD_FILE）；跟 activated 一樣會自動交接
 let appLead = false
+// lead.json 裡這個專案的主控是哪個終端機（可能是自己，也可能是同一個資料夾的另一個 Claude）
+let leadTerminal = ''
 // 專案代號（session 根目錄換成 - 的小寫字串）：lead.json 與 sessions 用它對專案
 let projectKey = ''
 // 上次寫給看板的狀態（不含時間）：沒變就不重寫
@@ -988,7 +1003,8 @@ async function resolvePaths($) {
   const defaultCompact = (await expandPath($, handoffSetting)).replace(/\.md$/i, '') + '.compact.md'
   compactFile = projectSettings.compact_path ? await expandPath($, projectSettings.compact_path) : defaultCompact
   tasksDir = pick('tasks_dir', '') ? await expandPath($, projectSettings.tasks_dir) : ''
-  selfLane = pick('tasks_self', 'architect').trim()
+  configuredSelf = pick('tasks_self', 'architect').trim()
+  pickSelfLane()
   const sync = projectSettings.sync_command
   syncCommand = Array.isArray(sync) && sync.length > 0 && sync.every((a) => typeof a === 'string') ? sync : []
   guardsFile = await expandPath($, GUARDS_FILE)
@@ -1002,6 +1018,19 @@ function laneProgress(l) {
 
 function laneStep(l) {
   return l.steps.find((s) => s.state === 'doing') ?? l.steps.find((s) => s.state === 'todo')
+}
+
+// lane 的 pane 是不是自己的終端機（App 的位址可能帶機器名稱 machine/t7）
+function isSelfPane(pane) {
+  return Boolean(herdrSelf) && typeof pane === 'string' && (pane === herdrSelf || pane.endsWith('/' + herdrSelf))
+}
+
+// 自己的 lane：pane 填自己終端機的那條（有好幾條時優先 tasks_self）；沒有的話用 tasks_self，
+// 但同一個資料夾的主控是別的終端機時就還沒有——tasks_self 是主控的，不能叫資料夾裡每個 Claude 都覆寫它
+function pickSelfLane() {
+  const mine = lanes.filter((l) => isSelfPane(l.pane))
+  if (mine.length) selfLane = (mine.find((l) => l.lane === configuredSelf) ?? mine[0]).lane
+  else selfLane = leadTerminal && leadTerminal !== herdrSelf ? '' : configuredSelf
 }
 
 function laneAgent(l) {
@@ -1061,6 +1090,7 @@ async function loadLanes($) {
   } catch (err) {
     lanesError = T.lanesReadFail(String(err))
   }
+  pickSelfLane()
   // 別的 lane 變成等你、待審、失敗時提醒（第一次載入不提醒）
   for (const l of lanes) {
     const prev = laneStates[l.lane]
@@ -1379,7 +1409,19 @@ async function saveHerdr($) {
 // lane 模式的交接：只帶一覽與自己的狀態，細節需要時再讀（不再整節附上交接文件）
 // 交接說明與指示要用到的路徑
 function briefingContext() {
-  return { tasksDir, selfLane, handoffFile, handoffSection, memoryDir, compactFile, projectSettingsFile, handoffAt: handoff.mtimeMs ? clock(handoff.mtimeMs) : '' }
+  return {
+    tasksDir,
+    selfLane,
+    configuredSelf,
+    leadTerminal,
+    terminal: herdrSelf,
+    handoffFile,
+    handoffSection,
+    memoryDir,
+    compactFile,
+    projectSettingsFile,
+    handoffAt: handoff.mtimeMs ? clock(handoff.mtimeMs) : '',
+  }
 }
 
 function laneBriefing(now) {
@@ -1734,9 +1776,13 @@ async function refreshLead($) {
   try {
     const file = await expandPath($, LEAD_FILE)
     const leads = (await $.fs.exists(file)) ? JSON.parse(await $.fs.read(file)) : {}
-    const lead = leads?.[projectKey]?.terminal === herdrSelf
-    if (lead === appLead) return
-    appLead = lead
+    const terminal = leads?.[projectKey]?.terminal
+    const lead = typeof terminal === 'string' ? terminal : ''
+    if (lead === leadTerminal) return
+    leadTerminal = lead
+    appLead = lead === herdrSelf
+    // 主控換了：自己的 lane 可能跟著變（不再是主控就不能再寫 tasks_self）
+    pickSelfLane()
     $.ui.invalidate('ui.render')
   } catch {}
 }
@@ -1750,6 +1796,8 @@ async function publishState($) {
     project: projectKey,
     root: (await $.session.root()).replace(/\\/g, '/'),
     lead: activated || appLead,
+    // 自己的 lane（空字串＝還沒有：同一個資料夾的主控是別人），看板顯示「狀態檔寫哪裡」
+    lane: selfLane,
     auto,
     armed,
     phase,
@@ -2080,6 +2128,8 @@ export function register(on, options) {
       projectKey = (await $.session.root()).replace(/[\\/]+$/, '').replace(/[^A-Za-z0-9]/g, '-').toLowerCase()
       await refreshLead($)
     }
+    // 讀 lane 時還不知道自己的終端機與主控：知道了再挑一次自己的 lane
+    pickSelfLane()
 
     let tick = 0
     $.clock.every(1000, async () => {
