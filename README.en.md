@@ -306,6 +306,7 @@ In the app you usually look at the tendr board on the right and never type `/ten
 - Conditions and steps are those of "Auto-handoff flow" above (`1h` cache, context at least 20%, within `away_hours`): with 5 minutes left, Claude is asked to update its own lane status file (or the handoff document) and memory, then the conversation is compacted
 - Each Claude writes its cache countdown and handoff state to `~/.tendr/sessions/<terminal>.json` (only on change); the board reads it every 10 s, every 3 s during a handoff. "Hand off now" writes `~/.tendr/requests/<terminal>.json`; the plugin picks it up within 2 s and marks it `done`, ignoring requests older than 2 minutes
 - Needs plugin 0.12 or later; restart Claude Code after updating for it to show up on the board
+- The flame before the board's title: a tendr is the one who tends the fire and keeps it from going out. It's lit while the project has a lead keeping watch (handing off automatically), dim without one
 
 #### Bringing Claude back after a reboot
 

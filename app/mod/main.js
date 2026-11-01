@@ -1,7 +1,7 @@
 // tendr 看板（herdr App 版）：主控與快取倒數（立即交接、指定主控）、lane 一覽與子頁（步驟、等你決定、即時畫面、按鍵、回覆）、交接文件、記憶
 // 資料由 tendr repo 的 app/board-data.mjs 讀（路徑規則與外掛一致），這裡只負責畫面與 hc 操作。
 // 由 app/install.mjs 裝到 ~/.config/herdr-app/mods/tendr-board，config.js 也是它寫的
-import { View, div } from "gpui-kit";
+import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input } from "gpui-base";
 import { exec, hc, theme, focused, panes, spaces, settings, watchFolder, notify, nextCommand } from "herdr";
 import { NODE, DATA_SCRIPT } from "./config.js";
@@ -462,7 +462,9 @@ export default class TendrBoard extends View {
     const t = theme();
     const now = Date.now();
     const l = this.lane();
+    // tendr：守著爐火、不讓它熄滅的人。這個專案有主控在顧（會自動交接）時火是亮的
     const header = h_flex().px(10).h(34).gap(6).items_center().border_b(1).border_color(t.border)
+      .child(svg("mods/tendr-board/flame.svg").size(14).text_color(this.leadSession() ? t.ansi3 : t.dim))
       .child(div().text_color(t.foreground).font_semibold().child("tendr"))
       .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(this.data?.name ? "· " + this.data.name : ""))
       .child(div().id("board-refresh").text_color(t.dim).hover((s) => s.text_color(t.foreground))
