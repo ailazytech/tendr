@@ -40,7 +40,7 @@ claude plugin install tendr@tendr
 - `/handoff`：立即交接，不用開看板。非全螢幕時滑鼠點不到看板按鈕，就用這個。
 - `/distill`：立即整理筆記（見「自動整理筆記」）。
 - `/guard`：查看與管理守門（見「守門」）。
-- 看板關著時，輸入框上方右側有一顆「◧ 工作看板」按鈕（`/config` 的 `launcher_button` 可關）。
+- 看板關著時，輸入框上方右側有一顆「🔥 工作看板」按鈕（tendr 是守著爐火的人；`/config` 的 `launcher_button` 可關）。
 
 看板要停靠在右側，需要全螢幕版面（`CLAUDE_CODE_NO_FLICKER=1`）且終端至少 110 欄；否則放在輸入框上方。
 

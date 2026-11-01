@@ -40,7 +40,7 @@ Open a new session and type `/tendr`.
 - `/handoff`: hand off now without opening the board. Use this when the mouse can't reach the board buttons (non-fullscreen layout).
 - `/distill`: update notes now (see "Auto notes").
 - `/guard`: view and manage guards (see "Guards").
-- While the board is closed, a "◧ Work board" button appears at the top right of the prompt box (disable with `launcher_button` in `/config`).
+- While the board is closed, a "🔥 Work board" button (a tendr tends the fire) appears at the top right of the prompt box (disable with `launcher_button` in `/config`).
 
 Docking on the right requires the fullscreen layout (`CLAUDE_CODE_NO_FLICKER=1`) and a terminal at least 110 columns wide; otherwise the board sits above the prompt box.
 

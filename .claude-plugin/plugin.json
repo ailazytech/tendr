@@ -1,6 +1,6 @@
 {
   "name": "tendr",
-  "version": "0.13.1",
+  "version": "0.13.2",
   "description": "Work board for Claude Code: auto handoff + compaction before the prompt cache expires, lane overview, layered memory, auto notes, nudges and guards / 工作看板：快取將過期時自動交接並壓縮、lane 一覽、分層記憶、自動整理筆記、防呆提醒與守門",
   "author": { "name": "ailazytech" },
   "license": "MIT",

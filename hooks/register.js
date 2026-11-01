@@ -92,7 +92,7 @@ const I18N = {
   'zh-TW': {
     handoffPrefix: '[自動交接]',
     paneTitle: '工作看板',
-    launcher: '◧ 工作看板',
+    launcher: '🔥 工作看板',
     cmdBoard: '開關工作看板（進度／記憶／快取倒數）',
     cmdHandoff: '立即交接：寫交接文件後壓縮對話（等同看板的「立即交接」）',
     registerFail: (name, err) => '註冊 /' + name + ' 失敗：' + err,
@@ -414,7 +414,7 @@ const I18N = {
   en: {
     handoffPrefix: '[auto-handoff]',
     paneTitle: 'Work board',
-    launcher: '◧ Work board',
+    launcher: '🔥 Work board',
     cmdBoard: 'Toggle the work board (progress / memory / cache countdown)',
     cmdHandoff: 'Hand off now: write the handoff, then compact (same as "Hand off now" on the board)',
     registerFail: (name, err) => 'Failed to register /' + name + ': ' + err,
