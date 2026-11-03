@@ -173,7 +173,8 @@ One `<lane>.json` per lane in `tasks_dir`:
 ```
 
 - Required: `lane`, `title` (one line), `state` (`blocked` / `failed` / `review` / `working` / `idle` / `done`), `steps` (`{ id, title, state: todo|doing|done|skip }`), `updated`
-- Optional: `needs` (decision waiting on the user), `pane` (herdr pane id; in the herdr app, a terminal address like `t7` or a name), `spec`, `head`, `report` (report file path), `notes`
+- Optional: `needs` (decision waiting on the user), `pane` (herdr pane id; in the herdr app, a terminal address like `t7` or a name), `agent` (display name, e.g. "main"), `spec`, `head`, `report` (report file path), `notes`, `group` / `group_title` (lanes of one batch stack together on the ZJNote board), `archived` / `archive_reason` (archived in ZJNote). tendr only checks the required fields and leaves the rest to the sync tool
+- When the user answers a lane's pending decision in ZJNote, ZJNote's `pm-sync` writes it to `answers.jsonl` in the same folder (one per line: `lane`, `question`, `answer`, `at`, `machine`; not a `.json` file, so it is never read as a lane). tendr attaches it to the next user message: a normal session sees only its own lane's answers, the lead sees all, each answer once per session (again after compaction), and only while that lane's `needs` still lists the question. Once the agent handles it and removes the question from `needs`, ZJNote clears the line on its next sync
 - Percentage = done steps ÷ (total − skipped)
 - Put project-specific rules and validation tooling in that folder's README
 

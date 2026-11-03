@@ -173,7 +173,8 @@ claude plugin install tendr@tendr
 ```
 
 - 必填：`lane`、`title`（一行）、`state`（`blocked`／`failed`／`review`／`working`／`idle`／`done`）、`steps`（`{ id, title, state: todo|doing|done|skip }`）、`updated`
-- 選填：`needs`（等使用者決定的事）、`pane`（herdr pane id；herdr App 是終端機位址如 `t7` 或名稱）、`spec`、`head`、`report`（報告檔路徑）、`notes`
+- 選填：`needs`（等使用者決定的事）、`pane`（herdr pane id；herdr App 是終端機位址如 `t7` 或名稱）、`agent`（顯示名稱，例如「主線」）、`spec`、`head`、`report`（報告檔路徑）、`notes`、`group`／`group_title`（同一批的 lane 在紙間看板疊在一起）、`archived`／`archive_reason`（在紙間封存）。tendr 只檢查必填欄位，其他欄位原樣留給同步的工具
+- 使用者在紙間回答 lane 的「等你決定」時，紙間的 `pm-sync` 會把回答寫進同一個資料夾的 `answers.jsonl`（一行一筆：`lane`、`question`、`answer`、`at`、`machine`；副檔名不是 `.json`，不會被當成 lane）。tendr 在下一則使用者訊息附給 Claude：一般 session 只看自己那條 lane 的、主控看全部，每筆在同一個 session 說一次（壓縮後再說一次）；那條 lane 的 `needs` 已經沒有這題就不提。agent 處理完把題目從 `needs` 拿掉，紙間下次同步就把那一行清掉
 - 百分比＝完成步驟 ÷（總數 − 跳過）
 - 專案自己的規則與驗證工具寫在該資料夾的 README
 

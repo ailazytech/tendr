@@ -252,6 +252,12 @@ const I18N = {
     laneLine: (lane, title, percent, done, total, standing) => lane + '：' + title + ' ' + percent + '%（' + done + '/' + total + '）· ' + standing,
     laneSelfSteps: (lane) => '你自己的步驟（' + lane + '）：',
     laneSelfNeeds: (needs) => '等使用者決定：' + needs,
+    answers: (list, file) =>
+      [
+        '[tendr] 使用者在紙間回答了「等你決定」（' + file + '）：',
+        ...list.map((a) => '- ' + a.lane + '「' + a.question + '」→ ' + a.answer + answerWhere(a, '（', '，', '）')),
+        '照回答做；處理完把這題從該 lane 狀態檔的 needs 拿掉（紙間下次同步時會把那一行清掉）。',
+      ].join('\n'),
     briefing: (c) => [
       '[tendr] 這個專案使用 tendr 交接機制：',
       '- 交接文件：' +
@@ -264,7 +270,7 @@ const I18N = {
       '- 這個專案還沒開「任務」分頁。如果工作有多條並行的線（派工給 herdr、有待派工清單、交接裡同時好幾項進行中），找適當時機問使用者要不要建立；不要自己建。',
       '  建法：在 ' +
         c.projectSettingsFile +
-        ' 寫 {"tasks_dir": "<資料夾>"}，資料夾裡每條 lane 一個 <lane>.json：lane、title（一行）、state（blocked／failed／review／working／idle／done）、steps（{ id, title, state: todo|doing|done|skip }）、updated，選填 needs、pane、spec、head、report、notes；主控自己那條叫 ' +
+        ' 寫 {"tasks_dir": "<資料夾>"}，資料夾裡每條 lane 一個 <lane>.json：lane、title（一行）、state（blocked／failed／review／working／idle／done）、steps（{ id, title, state: todo|doing|done|skip }）、updated，選填 needs、pane、agent（顯示名稱）、spec、head、report、notes、group／group_title（同一批的卡疊在一起）、archived／archive_reason（封存）；主控自己那條叫 ' +
         c.configuredSelf +
         '.json。',
     ],
@@ -562,6 +568,12 @@ const I18N = {
     laneLine: (lane, title, percent, done, total, standing) => lane + ': ' + title + ' ' + percent + '% (' + done + '/' + total + ') · ' + standing,
     laneSelfSteps: (lane) => 'Your steps (' + lane + '):',
     laneSelfNeeds: (needs) => 'Waiting on the user: ' + needs,
+    answers: (list, file) =>
+      [
+        '[tendr] The user answered pending decisions in ZhiJian (' + file + '):',
+        ...list.map((a) => '- ' + a.lane + ' "' + a.question + '" → ' + a.answer + answerWhere(a, ' (', ', ', ')')),
+        "Act on them; once handled, remove the question from that lane file's needs (ZhiJian clears the line on its next sync).",
+      ].join('\n'),
     briefing: (c) => [
       '[tendr] This project uses the tendr handoff mechanism:',
       '- Handoff document: ' +
@@ -574,7 +586,7 @@ const I18N = {
       "- This project has no Tasks tab yet. If the work has several parallel lines (work dispatched through herdr, a backlog to dispatch, several items in progress in the handoff), ask the user at a suitable moment whether to create one; don't create it yourself.",
       '  How: write {"tasks_dir": "<folder>"} to ' +
         c.projectSettingsFile +
-        '; in that folder, one <lane>.json per lane: lane, title (one line), state (blocked / failed / review / working / idle / done), steps ({ id, title, state: todo|doing|done|skip }), updated; optional needs, pane, spec, head, report, notes. The lead\'s own file is ' +
+        '; in that folder, one <lane>.json per lane: lane, title (one line), state (blocked / failed / review / working / idle / done), steps ({ id, title, state: todo|doing|done|skip }), updated; optional needs, pane, agent (display name), spec, head, report, notes, group / group_title (stack lanes of one batch), archived / archive_reason. The lead\'s own file is ' +
         c.configuredSelf +
         '.json.',
     ],
@@ -812,6 +824,9 @@ let briefOnStart = true
 let needsBriefing = true
 let memories = []
 let handoff = { text: '', mtimeMs: 0 }
+// 使用者在紙間回答、lane 還沒處理的（answers.jsonl），以及這個 session 已經告訴過 Claude 的（壓縮後重新算）
+let answers = []
+let answersSeen = new Set()
 
 // 快取與自動交接
 let sessionId = ''
@@ -1031,6 +1046,53 @@ function pickSelfLane() {
   const mine = lanes.filter((l) => isSelfPane(l.pane))
   if (mine.length) selfLane = (mine.find((l) => l.lane === configuredSelf) ?? mine[0]).lane
   else selfLane = leadTerminal && leadTerminal !== herdrSelf ? '' : configuredSelf
+}
+
+// 紙間（ZhiJian）的 pm-sync 把使用者在紙間回答的「等你決定」寫進 tasks 資料夾的 answers.jsonl，一行一筆（lane、question、answer、at、machine）。
+// 副檔名刻意不是 .json：loadLanes 會把 .json 都當成 lane。那條 lane 的 needs 還列著這題才算還沒處理；
+// agent 處理完把題目從 needs 拿掉，紙間下次同步就把那一行清掉
+const ANSWERS_FILE = 'answers.jsonl'
+
+function needList(l) {
+  const one = (x) => (typeof x === 'string' ? x : x && typeof x === 'object' ? String(x.question ?? x.text ?? x.title ?? '') : x == null ? '' : String(x))
+  return (Array.isArray(l.needs) ? l.needs.map(one) : [one(l.needs)]).map((q) => q.trim()).filter(Boolean)
+}
+
+async function loadAnswers($) {
+  answers = []
+  if (!tasksDir) return
+  try {
+    const file = tasksDir + '/' + ANSWERS_FILE
+    if (!(await $.fs.exists(file))) return
+    for (const line of String(await $.fs.read(file)).split('\n')) {
+      let a
+      try {
+        a = JSON.parse(line)
+      } catch {
+        continue
+      }
+      if (!a || typeof a.lane !== 'string' || typeof a.question !== 'string' || typeof a.answer !== 'string') continue
+      const lane = lanes.find((l) => l.lane === a.lane)
+      if (lane && needList(lane).includes(a.question.trim())) answers.push(a)
+    }
+  } catch {}
+}
+
+// 這個 session 該知道的：自己那條 lane 的；主控看全部
+function myAnswers() {
+  const lead = !!selfLane && selfLane === configuredSelf
+  return answers.filter((a) => lead || a.lane === selfLane)
+}
+
+function answerKey(a) {
+  return [a.lane, a.id ?? '', a.question, a.answer].join('\n')
+}
+
+// 「（電腦，11-03 17:23）」：時間取 ISO 字串的月日時分
+function answerWhere(a, open, sep, close) {
+  const at = typeof a.at === 'string' ? a.at.replace('T', ' ').slice(5, 16) : ''
+  const parts = [typeof a.machine === 'string' ? a.machine : '', at].filter(Boolean)
+  return parts.length ? open + parts.join(sep) + close : ''
 }
 
 function laneAgent(l) {
@@ -2232,8 +2294,11 @@ export function register(on, options) {
       } catch {}
       // 上一輪最後的回答語言跑掉，提醒跟著這則訊息帶給 Claude
       const extra = takeNext(reply)
-      if (briefOnStart && needsBriefing) {
+      const briefNow = briefOnStart && needsBriefing
+      if (briefNow) {
         needsBriefing = false
+        // 新 session 或壓縮過：之前告訴過的回答已經不在對話裡了，再說一次
+        answersSeen = new Set()
         await loadHandoff($)
         await loadLanes($)
         await loadMemories($)
@@ -2245,6 +2310,16 @@ export function register(on, options) {
           ...(promote.length ? [T.promote(promote, memoryDir)] : []),
           ...(drafts.length ? [T.guardAsk(drafts, guardsFile)] : []),
         )
+      }
+      // 使用者在紙間回答了 lane 的問題：每一筆在這個 session 說一次
+      if (tasksDir) {
+        try {
+          if (!briefNow) await loadLanes($)
+          await loadAnswers($)
+          const fresh = myAnswers().filter((a) => !answersSeen.has(answerKey(a)))
+          for (const a of fresh) answersSeen.add(answerKey(a))
+          if (fresh.length) extra.push(T.answers(fresh, tasksDir + '/' + ANSWERS_FILE))
+        } catch {}
       }
       if (extra.length) return next({ ...e, context: [...(e.context ?? []), ...extra] })
     }

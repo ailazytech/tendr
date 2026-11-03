@@ -611,6 +611,50 @@ test('herdr App：pane 是自己終端機的 lane 就是自己的', async ($, on
   expect(calls.submits[0]).toContain(ROOT + '/docs/lanes/status/canvas.json')
 })
 
+// 紙間的 pm-sync 把使用者在紙間回答的「等你決定」寫進 tasks 資料夾的 answers.jsonl（一行一筆）
+const answerLine = (o: object) => JSON.stringify(o) + '\n'
+
+test('紙間的回答：needs 還列著的才說、每筆在這個 session 說一次、壞掉的行略過', async ($, on) => {
+  const { calls, files } = setup(on, { projectSettings: LANE_SETTINGS, lanes: LANES })
+  files.set(
+    LANES_DIR + '/answers.jsonl',
+    answerLine({ id: 'b1', lane: 'ops', question: '要刪除 2 個舊 secret 嗎？', answer: '刪，先備份', at: '2026-11-03T17:23:43+08:00', machine: 'mac-mini' }) +
+      answerLine({ id: 'b2', lane: 'ops', question: '已經處理掉的題目', answer: '好' }) +
+      '不是 JSON\n',
+  )
+  await start($)
+  await $.prompt.submit({ text: '繼續', origin: { kind: 'composer' }, wait: false })
+  const ctx = calls.contexts[0].join('\n')
+  // 主控（tasks_self）看得到每條 lane 的回答
+  expect(ctx).toContain('使用者在紙間回答了「等你決定」（' + LANES_DIR + '/answers.jsonl）')
+  expect(ctx).toContain('- ops「要刪除 2 個舊 secret 嗎？」→ 刪，先備份（mac-mini，11-03 17:23）')
+  expect(ctx).not.toContain('已經處理掉的題目')
+  // answers.jsonl 不是 lane 檔：不會出現在「讀不懂」裡
+  expect(ctx).not.toContain('讀不懂')
+  await $.prompt.submit({ text: '好', origin: { kind: 'composer' }, wait: false })
+  expect(calls.contexts[1].join('\n')).not.toContain('刪，先備份')
+  // agent 處理完把題目從 needs 拿掉：就算檔案還沒清，也不再提
+  files.set(LANES_DIR + '/ops.json', JSON.stringify({ ...LANES.ops, needs: undefined, state: 'working' }))
+  files.set(LANES_DIR + '/answers.jsonl', answerLine({ id: 'b1', lane: 'ops', question: '要刪除 2 個舊 secret 嗎？', answer: '改成不刪' }))
+  await $.prompt.submit({ text: '然後呢', origin: { kind: 'composer' }, wait: false })
+  expect(calls.contexts[2].join('\n')).not.toContain('改成不刪')
+})
+
+test('紙間的回答：不是主控的 session 只看自己那條 lane 的', async ($, on) => {
+  const mine = { lane: 'canvas', title: '規格畫布', pane: 't4', state: 'blocked', needs: ['要不要支援合併儲存格？'], steps: [{ id: 'C1', title: '匯入 Excel', state: 'doing' }], updated: UPDATED }
+  const { calls, files } = setup(on, { hc: true, projectSettings: LANE_SETTINGS, lanes: { ...LANES, canvas: mine } })
+  files.set(LEAD_FILE, JSON.stringify({ [KEY]: { terminal: 't9' } }))
+  files.set(
+    LANES_DIR + '/answers.jsonl',
+    answerLine({ lane: 'ops', question: '要刪除 2 個舊 secret 嗎？', answer: '刪' }) + answerLine({ lane: 'canvas', question: '要不要支援合併儲存格？', answer: '先不要' }),
+  )
+  await start($)
+  await $.prompt.submit({ text: '繼續', origin: { kind: 'composer' }, wait: false })
+  const ctx = calls.contexts[0].join('\n')
+  expect(ctx).toContain('- canvas「要不要支援合併儲存格？」→ 先不要')
+  expect(ctx).not.toContain('→ 刪')
+})
+
 test('自動交接開關會存起來', async ($, on) => {
   const { saved } = setup(on)
   await start($)
